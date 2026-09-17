@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Environment and secrets
+.env
+.env.*
+*.env
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Generated data and runtime artifacts
+data/audio/*
+data/images/*
+data/stories/*
+!data/audio/.gitkeep
+!data/images/.gitkeep
+!data/stories/.gitkeep
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StoryReader — AI Novel Studio & Reader</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,800;1,400;1,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="theme-parchment">
+  <div id="app" class="app-container">
+    
+    <!-- TOP NAVIGATION BAR -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo-group">
+          <span class="logo-icon">📖</span>
+          <div class="logo-text">
+            <h1>StoryReader</h1>
+            <span class="subtitle">AI Long-Form Novel Generator</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- PROCESS STEPS -->
+      <nav class="steps-nav">
+        <div class="step-item active" id="step-nav-1" data-stage="concept">
+          <span class="step-num">1</span>
+          <span class="step-label">Premise</span>
+        </div>
+        <div class="step-divider"></div>
+        <div class="step-item" id="step-nav-2" data-stage="outline">
+          <span class="step-num">2</span>
+          <span class="step-label">Plot & Chapters</span>
+        </div>
+        <div class="step-divider"></div>
+        <div class="step-item" id="step-nav-characters" data-stage="characters">
+          <span class="step-num">3</span>
+          <span class="step-label">Character Dossiers</span>
+        </div>
+        <div class="step-divider"></div>
+        <div class="step-item" id="step-nav-3" data-stage="storyboard">
+          <span class="step-num">4</span>
+          <span class="step-label">Chapter Storyboard</span>
+        </div>
+        <div class="step-divider"></div>
+        <div class="step-item" id="step-nav-4" data-stage="generating">
+          <span class="step-num">5</span>
+          <span class="step-label">Writing Novel</span>
+        </div>
+        <div class="step-divider"></div>
+        <div class="step-item" id="step-nav-5" data-stage="reader">
+          <span class="step-num">6</span>
+          <span class="step-label">Complete Novel</span>
+        </div>
+      </nav>
+
+      <div class="header-right">
+        <!-- Ollama Connection Status -->
+        <div class="ollama-status" id="ollamaStatusBadge">
+          <span class="status-dot dot-checking"></span>
+          <span class="status-text" id="statusText">Checking Ollama...</span>
+        </div>
+        <button class="btn-secondary btn-sm" id="btnOpenSavedModal" title="Saved Novels">
+          📚 Library
+        </button>
+      </div>
+    </header>
+
+    <!-- MAIN CONTENT AREA -->
+    <main class="app-main">
+
+      <!-- ============================================== -->
+      <!-- STAGE 1: PREMISE & CONCEPT                     -->
+      <!-- ============================================== -->
+      <section id="stage-concept" class="stage-view active">
+        <div class="hero-banner">
+          <span class="hero-tag">AI-Powered Long-Form Novel Studio</span>
+          <h2>Craft a Complete Novel from a Single Premise</h2>
+          <p>Structured narrative development: Narrative Architect → Character Designer → Chapter Storyboard → Novelist prose.</p>
+        </div>
+
+        <div class="concept-card glass-panel">
+          <div class="form-grid">
+            <div class="form-group full-width">
+              <label for="promptInput">Story Premise <span class="required">*</span></label>
+              <textarea id="promptInput" rows="5" placeholder="Enter your story premise: characters, world, core tension, secrets, and where the story leads..."></textarea>
+              <div class="prompt-suggestions">
+                <span>Premise Sparks:</span>
+                <button type="button" class="btn-chip" data-prompt="A fierce competitive classical pianist and a rugged storm chaser get snowbound in a historic mountain cabin in Vermont, uncovering a shared music box with cryptic journal letters.">Winter Cabin Romance</button>
+                <button type="button" class="btn-chip" data-prompt="A rookie investigative journalist goes undercover at an elite coastal sailing club to expose an art forgery syndicate, only to fall for the prime suspect enigmatic sibling.">Coastal Intrigue</button>
+                <button type="button" class="btn-chip" data-prompt="Two estranged childhood friends inherit a crumbling lighthouse and bookstore in Maine, bound by a will that forces them to run it together for one summer.">Lighthouse Secrets</button>
+              </div>
+            </div>
+
+            <div class="form-group full-width">
+              <label for="titleInput">Novel Title (Optional)</label>
+              <input type="text" id="titleInput" placeholder="e.g. Echoes in the Winter Mist (or leave blank to auto-generate)">
+            </div>
+
+            <!-- DUAL CONFIGURATION SLIDERS: CHAPTERS & TOTAL WORDS -->
+            <div class="form-group full-width sliders-dual-container">
+              <!-- Slider 1: Total Chapters (3 to 144) -->
+              <div class="slider-box">
+                <div class="slider-header">
+                  <label for="sceneCountInput">Total Chapters (3 – 144 Chapters)</label>
+                  <span class="slider-val-badge" id="sceneCountDisplay">20 Chapters</span>
+                </div>
+                <input type="range" id="sceneCountInput" min="3" max="144" value="20" step="1">
+                <div class="slider-ticks">
+                  <span>3 (Min)</span>
+                  <span>20 (Standard)</span>
+                  <span>60 (Epic)</span>
+                  <span>144 (Grand Saga)</span>
+                </div>
+              </div>
+
+              <!-- Slider 2: Total Word Count (1,000 to 400,000) -->
+              <div class="slider-box">
+                <div class="slider-header">
+                  <label for="totalWordsInput">Total Word Count (1,000 – 400,000 Words)</label>
+                  <span class="slider-val-badge badge-green" id="totalWordsDisplay">50,000 Words</span>
+                </div>
+                <input type="range" id="totalWordsInput" min="1000" max="400000" value="50000" step="500">
+                <div class="slider-ticks">
+                  <span>1,000 (Short)</span>
+                  <span>50,000 (Novel)</span>
+                  <span>100,000 (Epic)</span>
+                  <span>400,000 (Saga)</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- GENRE & ARCHITECTURAL PRESETS -->
+            <div class="form-group full-width presets-row" id="novelPresetContainer">
+              <span class="presets-label">⚡ Genre & Structural Archetypes:</span>
+              <div class="presets-buttons" id="genrePresetsButtons">
+                <button type="button" class="btn-chip btn-preset" data-genre="cozy_fiction" data-chapters="24" data-words="72000">Cozy Fiction (24ch • 72k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="contemporary_romance" data-chapters="40" data-words="95000">Romance (40ch • 95k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="young_adult" data-chapters="34" data-words="82000">YA (34ch • 82k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="thriller_mystery" data-chapters="32" data-words="98000">Thriller / Mystery (32ch • 98k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="urban_fantasy" data-chapters="42" data-words="110000">Urban Fantasy (42ch • 110k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="literary_fiction" data-chapters="25" data-words="115000">Literary Fiction (25ch • 115k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="sci_fi" data-chapters="50" data-words="140000">Sci-Fi Space Opera (50ch • 140k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="epic_fantasy" data-chapters="60" data-words="175000">Epic Fantasy (60ch • 175k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="litrpg" data-chapters="42" data-words="100000">LitRPG / GameLit (42ch • 100k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="historical_fiction" data-chapters="35" data-words="125000">Historical Fiction (35ch • 125k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="horror" data-chapters="30" data-words="95000">Horror (30ch • 95k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="military_fiction" data-chapters="42" data-words="130000">Military Fiction (42ch • 130k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="dystopian" data-chapters="35" data-words="105000">Dystopian (35ch • 105k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="cozy_mystery" data-chapters="28" data-words="75000">Cozy Mystery (28ch • 75k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="satire_comedy" data-chapters="38" data-words="92000">Satire / Comedy (38ch • 92k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="romantic_suspense" data-chapters="44" data-words="115000">Romantic Suspense (44ch • 115k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="cyberpunk" data-chapters="48" data-words="135000">Cyberpunk (48ch • 135k)</button>
+                <button type="button" class="btn-chip btn-preset" data-genre="speculative_fiction" data-chapters="30" data-words="118000">Speculative Fiction (30ch • 118k)</button>
+              </div>
+            </div>
+
+            <!-- DYNAMIC WORDS PER CHAPTER RATIO & RECOMMENDATION BANNER -->
+            <div class="form-group full-width">
+              <div class="novel-math-banner" id="novelMathBanner">
+                <div class="math-banner-header">
+                  <div class="math-formula-badge" id="novelMathFormula">
+                    📊 50,000 Total Words ÷ 20 Chapters = ~2,500 Words / Chapter
+                  </div>
+                  <div class="math-banner-tags">
+                    <span class="meta-pill pill-gold" id="novelScopeBadge">📖 Standard Novel</span>
+                    <span class="meta-pill pill-blue" id="novelDensityBadge">⚡ Standard Literary (~2,500w/ch)</span>
+                  </div>
+                </div>
+                <div class="math-banner-body">
+                  <p id="novelPacingAdvice" class="novel-pacing-text">
+                    Select your chapter count and word budget above to view genre recommendations, pacing insights, and structural rationales.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- READING LEVEL & PROSE SOPHISTICATION SELECTOR -->
+            <div class="form-group full-width reading-level-box">
+              <div class="reading-level-header">
+                <label for="readingLevelSelect">Target Reading Level & Prose Sophistication:</label>
+                <span class="meta-pill pill-purple" id="readingLevelGradeBadge">General Adult</span>
+              </div>
+              <div class="reading-level-controls">
+                <select id="readingLevelSelect" class="reading-level-select">
+                  <option value="middle_grade">Middle Grade (Ages 8–12 / Grades 4–7)</option>
+                  <option value="young_adult">Young Adult (YA / Teens / Grades 8–10)</option>
+                  <option value="general_commercial" selected>Commercial Bestseller / Accessible Adult</option>
+                  <option value="literary_advanced">Literary / Advanced Fiction (Scholarly Depth)</option>
+                  <option value="academic_dense">Academic / Classical Dense (Erudite & Complex)</option>
+                </select>
+                <div class="reading-level-desc" id="readingLevelDesc">
+                  Propulsive narrative momentum, polished prose, engaging dialogue, and seamless readability that pulls the reader through every page.
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group full-width model-config-row">
+              <div class="model-select-wrap">
+                <label for="modelSelect">Local Ollama Model:</label>
+                <input type="text" id="modelSelect" value="hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P" placeholder="hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P">
+              </div>
+              <span class="model-note">Preset to <code>hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P</code></span>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button class="btn-primary btn-lg pulse" id="btnRunFullPipeline" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);">
+              <span class="btn-icon">⚡</span> Auto-Run Complete Novel (End-to-End)
+            </button>
+            <button class="btn-secondary btn-lg" id="btnGenerateStoryboard">
+              <span class="btn-icon">✨</span> Step-by-Step Mode →
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================== -->
+      <!-- STAGE 2: PLOT & CHAPTER ROADMAP (Narrative Architect) -->
+      <!-- ============================================== -->
+      <section id="stage-base-story" class="stage-view">
+        <div class="base-story-header-bar glass-panel">
+          <div class="base-story-meta">
+            <div class="base-story-tag-row">
+              <span class="badge-stage">STEP 1: NARRATIVE ARCHITECT</span>
+              <span class="meta-pill" id="baseStoryScenesBadge">20 Chapters Planned</span>
+              <span class="meta-pill" id="baseStoryModelBadge">hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P</span>
+            </div>
+            <h2 id="baseStoryTitle">Story Plot & Chapter Roadmap</h2>
+            <p id="baseStoryPromptSummary" class="base-story-prompt-sub">Premise...</p>
+          </div>
+
+          <div class="base-story-actions">
+            <button class="btn-secondary" id="btnBackToPremiseFromBase">← Back to Premise</button>
+            <button class="btn-secondary" id="btnRegenBaseStory">🔄 Regenerate Plot</button>
+            <button class="btn-primary btn-lg pulse" id="btnConfirmBaseStory">
+              <span class="btn-icon">👥</span> Step 2: Design Character Dossiers →
+            </button>
+          </div>
+        </div>
+
+        <!-- Live Model Thinking Drawer -->
+        <div class="base-story-thinking-container glass-panel" id="baseStoryThinkingWrap" style="display: none;">
+          <div class="thinking-header" id="thinkingHeader">
+            <div class="thinking-header-left">
+              <span class="thinking-icon">🧠</span>
+              <span class="thinking-title">Model Reasoning & Thinking Stream</span>
+              <span class="thinking-badge" id="thinkingStatusBadge">Thinking...</span>
+            </div>
+            <button type="button" class="btn-toggle-sm" id="btnToggleThinking">▼ Collapse</button>
+          </div>
+          <div class="thinking-body" id="baseStoryThinkingBody">
+            <pre class="thinking-content" id="baseStoryThinkingContent"></pre>
+          </div>
+        </div>
+
+        <!-- Outline Content Card -->
+        <div class="base-story-editor-card glass-panel">
+          <div class="editor-toolbar">
+            <div class="toolbar-left">
+              <span class="pulsing-red-dot" id="baseLiveStreamDot" style="display:none;"></span>
+              <span class="editor-label" id="baseLiveStreamStatus">Chapter-by-Chapter Plot Roadmap</span>
+            </div>
+            <div class="toolbar-right">
+              <span class="word-counter" id="baseStoryLiveWordCount">0 Words</span>
+            </div>
+          </div>
+
+          <div class="base-story-text-container">
+            <textarea id="baseStoryTextarea" class="base-story-textarea" placeholder="The Narrative Architect is crafting your chapter-by-chapter roadmap... You can edit and customize this plot directly before generating character dossiers."></textarea>
+            <div class="base-story-live-preview" id="baseStoryLiveContent" style="display:none;"></div>
+          </div>
+
+          <div class="base-story-bottom-bar">
+            <button class="btn-secondary" id="btnBackToPremiseFromBaseBottom">← Edit Premise</button>
+            <button class="btn-primary btn-lg pulse" id="btnConfirmBaseStoryBottom">
+              <span class="btn-icon">👥</span> Step 2: Design Character Dossiers →
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================== -->
+      <!-- STAGE 2.5: CHARACTER DOSSIERS (Character Designer) -->
+      <!-- ============================================== -->
+      <section id="stage-characters" class="stage-view">
+        <div class="base-story-header-bar glass-panel">
+          <div class="base-story-meta">
+            <div class="base-story-tag-row">
+              <span class="badge-stage">STEP 2: CHARACTER DESIGNER</span>
+              <span class="meta-pill" id="charactersCountBadge">Cast of Characters</span>
+            </div>
+            <h2 id="charactersStoryTitle">Character Dossiers & Synergy</h2>
+            <p id="charactersPromptSummary" class="base-story-prompt-sub">Comprehensive dossiers for all main and supporting characters.</p>
+          </div>
+
+          <div class="base-story-actions">
+            <button class="btn-secondary" id="btnBackToOutlineFromChars">← Back to Plot</button>
+            <button class="btn-secondary" id="btnRegenCharacters">🔄 Regenerate Characters</button>
+            <button class="btn-primary btn-lg pulse" id="btnConfirmCharacters">
+              <span class="btn-icon">🎬</span> Step 3: Build Chapter Storyboard →
+            </button>
+          </div>
+        </div>
+
+        <!-- Live Model Thinking Drawer for Characters -->
+        <div class="base-story-thinking-container glass-panel" id="charactersThinkingWrap" style="display: none;">
+          <div class="thinking-header" id="charactersThinkingHeader">
+            <div class="thinking-header-left">
+              <span class="thinking-icon">🧠</span>
+              <span class="thinking-title">Character Designer Reasoning</span>
+              <span class="thinking-badge" id="charactersThinkingStatusBadge">Thinking...</span>
+            </div>
+            <button type="button" class="btn-toggle-sm" id="btnToggleCharactersThinking">▼ Collapse</button>
+          </div>
+          <div class="thinking-body" id="charactersThinkingBody">
+            <pre class="thinking-content" id="charactersThinkingContent"></pre>
+          </div>
+        </div>
+
+        <!-- Characters Editor Card -->
+        <div class="base-story-editor-card glass-panel">
+          <div class="editor-toolbar">
+            <div class="toolbar-left">
+              <span class="pulsing-red-dot" id="charactersLiveStreamDot" style="display:none;"></span>
+              <span class="editor-label" id="charactersLiveStreamStatus">Character Dossiers (Markdown Tables)</span>
+            </div>
+            <div class="toolbar-right">
+              <span class="word-counter" id="charactersLiveWordCount">0 Words</span>
+            </div>
+          </div>
+
+          <div class="base-story-text-container">
+            <textarea id="charactersTextarea" class="base-story-textarea" placeholder="Character dossiers will appear here... You can edit character backgrounds, traits, and synergies directly."></textarea>
+          </div>
+
+          <div class="base-story-bottom-bar">
+            <button class="btn-secondary" id="btnBackToOutlineFromCharsBottom">← Edit Plot</button>
+            <button class="btn-primary btn-lg pulse" id="btnConfirmCharactersBottom">
+              <span class="btn-icon">🎬</span> Step 3: Build Chapter Storyboard →
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================== -->
+      <!-- STAGE 3: CHAPTER STORYBOARD (Storyboard Creator) -->
+      <!-- ============================================== -->
+      <section id="stage-storyboard" class="stage-view">
+        <div class="storyboard-header-bar glass-panel">
+          <div class="storyboard-meta">
+            <div class="base-story-tag-row">
+              <span class="badge-stage">STEP 3: STORYBOARD CREATOR</span>
+              <span class="meta-pill" id="sbSceneCountBadge">20 Chapters</span>
+              <span class="meta-pill" id="sbEstimatedWords">Est. ~50,000 words</span>
+            </div>
+            <h2 id="sbStoryTitle">Chapter Storyboard</h2>
+          </div>
+          <div class="storyboard-actions">
+            <button class="btn-secondary" id="btnBackToCharacters">← Edit Characters</button>
+            <button class="btn-secondary" id="btnRegenStoryboard">🔄 Regenerate Storyboard</button>
+            <button class="btn-primary btn-lg pulse" id="btnContinueToGeneration">
+              <span class="btn-icon">✍️</span> Step 4: Novelist Write Full Chapters →
+            </button>
+          </div>
+        </div>
+
+        <div class="storyboard-summary-box">
+          <p id="sbStoryPromptSummary">Original Premise...</p>
+        </div>
+
+        <!-- Image Generation Toolbar -->
+        <div class="storyboard-image-toolbar">
+          <div class="image-toolbar-left">
+            <span class="toolbar-title">🎨 Seedream 5.0 Pro Artwork Studio</span>
+            <span class="toolbar-subtitle">Generate cinematic illustrations for each chapter card using <code>seedream/5-pro-text-to-image</code></span>
+          </div>
+          <div class="image-toolbar-right">
+            <div class="toolbar-control-group">
+              <label for="imgAspectRatioSelect">Aspect Ratio:</label>
+              <select id="imgAspectRatioSelect" class="form-select-sm">
+                <option value="16:9" selected>16:9 (Landscape)</option>
+                <option value="1:1">1:1 (Square)</option>
+                <option value="9:16">9:16 (Portrait)</option>
+                <option value="4:3">4:3 (Classic)</option>
+                <option value="3:4">3:4 (Book Cover)</option>
+                <option value="21:9">21:9 (Cinematic Ultrawide)</option>
+              </select>
+            </div>
+            <button type="button" class="btn-secondary btn-sm" id="btnSetKieApiKey">🔑 Set API Key</button>
+            <button type="button" class="btn-primary btn-sm" id="btnGenAllChapterImages">✨ Generate All Images</button>
+          </div>
+        </div>
+
+        <!-- Chapter Cards Grid -->
+        <div class="scenes-grid" id="scenesGrid">
+          <!-- Populated dynamically with chapter cards -->
+        </div>
+
+        <div class="storyboard-bottom-bar">
+          <button class="btn-primary btn-lg pulse" id="btnContinueToGenerationBottom">
+            <span class="btn-icon">✍️</span> Start Writing Full Chapters with Novelist Engine →
+          </button>
+        </div>
+      </section>
+
+      <!-- ============================================== -->
+      <!-- STAGE 4: SEQUENTIAL CHAPTER GENERATION (Novelist) -->
+      <!-- ============================================== -->
+      <section id="stage-generating" class="stage-view">
+        <div class="gen-progress-panel glass-panel">
+          <div class="gen-header-row">
+            <div>
+              <span class="gen-tag">STEP 4: NOVELIST ENGINE GENERATION</span>
+              <h2 id="genStatusTitle">Writing Chapter 1 of 20...</h2>
+            </div>
+            <div class="gen-stats-group">
+              <div class="stat-box">
+                <span class="stat-num" id="genProgressCount">0 / 20</span>
+                <span class="stat-lbl">Chapters Finished</span>
+              </div>
+              <div class="stat-box">
+                <span class="stat-num" id="genTotalWords">0</span>
+                <span class="stat-lbl">Total Words</span>
+              </div>
+              <div class="stat-box">
+                <span class="stat-num" id="genTimeElapsed">00:00</span>
+                <span class="stat-lbl">Elapsed</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Overall Progress Bar -->
+          <div class="progress-bar-wrap">
+            <div class="progress-bar-fill" id="genProgressBar" style="width: 0%"></div>
+          </div>
+
+          <div class="gen-controls-row">
+            <span class="gen-subtext" id="genSubtext">Writing detailed chapters with narrative continuity using <code>hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P</code>...</span>
+            <div class="gen-action-btns">
+              <button class="btn-secondary btn-sm" id="btnPauseGen">⏸ Pause</button>
+              <button class="btn-secondary btn-sm" id="btnStopGen">⏹ Stop Batch</button>
+              <button class="btn-primary btn-sm" id="btnViewReaderNow" style="display: none;">
+                📖 Open Complete Novel →
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Generation Dual Layout: Live Stream + Completed Chapters List -->
+        <div class="gen-workspace-grid">
+          <!-- Live Active Chapter Writer Box -->
+          <div class="live-writer-card">
+            <div class="writer-card-header">
+              <div class="live-indicator">
+                <span class="pulsing-red-dot"></span>
+                <span class="writer-title" id="currentWritingSceneTitle">Chapter 1: The Beginning</span>
+              </div>
+              <div class="writer-badges" id="currentWritingSceneBadges">
+                <span class="meta-pill" id="currentSceneSetting">Setting</span>
+                <span class="meta-pill" id="currentSceneMood">Mood</span>
+              </div>
+            </div>
+
+            <div class="active-characters-bar" id="currentSceneCharactersBar">
+              <strong>Characters in Chapter:</strong>
+              <div class="character-tags-list" id="currentSceneCharTags"></div>
+            </div>
+
+            <!-- Live Text Container -->
+            <div class="live-text-viewport" id="liveTextViewport">
+              <div class="parchment-content" id="liveTextContent">
+                <div class="waiting-placeholder">
+                  <div class="spinner"></div>
+                  <p>Connecting to Ollama model <code>hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P</code>...</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chapter Sequence Sidebar Tracker -->
+          <div class="scenes-timeline-card glass-panel">
+            <div class="timeline-header">
+              <h3>Novel Chapter Queue</h3>
+              <span class="timeline-count" id="timelineCountBadge">0/20 Complete</span>
+            </div>
+            <div class="scenes-queue-list" id="scenesQueueList">
+              <!-- Dynamic queue items -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================== -->
+      <!-- STAGE 6: COMPLETE NOVEL READER                 -->
+      <!-- ============================================== -->
+      <section id="stage-reader" class="stage-view">
+        <!-- Reader Top Toolbar -->
+        <div class="reader-toolbar glass-panel">
+          <div class="reader-toolbar-left">
+            <button class="btn-icon-label" id="btnReaderTOC" title="Table of Contents">
+              📑 <span>Chapters</span>
+            </button>
+            <div class="reader-title-group">
+              <h3 id="readerBookTitle">The Complete Novel</h3>
+              <span class="reader-scene-indicator" id="readerCurrentSceneIndicator">Chapter 1: The Beginning</span>
+            </div>
+          </div>
+
+          <div class="reader-toolbar-center">
+            <div class="page-nav-controls">
+              <button class="btn-nav" id="btnPrevPage" title="Previous Page (Left Arrow)">◀</button>
+              <div class="page-number-box">
+                <span id="readerPageCurrent">1</span>
+                <span class="page-sep">/</span>
+                <span id="readerPageTotal">1</span>
+              </div>
+              <button class="btn-nav" id="btnNextPage" title="Next Page (Right Arrow)">▶</button>
+            </div>
+          </div>
+
+          <div class="reader-toolbar-right">
+            <!-- Appearance settings -->
+            <div class="reader-settings-group">
+              <!-- Font Size -->
+              <button class="btn-toggle-sm" id="btnFontDec" title="Smaller Font">A-</button>
+              <button class="btn-toggle-sm" id="btnFontInc" title="Larger Font">A+</button>
+
+              <!-- Theme Palette Switcher -->
+              <div class="theme-picker" title="Reader Theme">
+                <button class="theme-btn theme-parchment-btn active" data-theme="theme-parchment" title="Parchment"></button>
+                <button class="theme-btn theme-paper-btn" data-theme="theme-paper" title="Classic Paper"></button>
+                <button class="theme-btn theme-sepia-btn" data-theme="theme-sepia" title="Warm Sepia"></button>
+                <button class="theme-btn theme-dark-btn" data-theme="theme-dark" title="Dark Velvet"></button>
+              </div>
+
+              <!-- Export Menu -->
+              <div class="dropdown-wrap">
+                <button class="btn-secondary btn-sm" id="btnExportMenu">💾 Export Novel ▾</button>
+                <div class="dropdown-menu" id="exportDropdown">
+                  <button class="dropdown-item" id="btnExportMD">Markdown (.md)</button>
+                  <button class="dropdown-item" id="btnExportTXT">Plain Text (.txt)</button>
+                  <button class="dropdown-item" id="btnExportPrint">Print / Save as PDF</button>
+                  <button class="dropdown-item" id="btnExportJSON">Story Project (.json)</button>
+                </div>
+              </div>
+
+              <button class="btn-secondary btn-sm" id="btnNewStory">✨ New Novel</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- REALISTIC 3D OPEN BOOK SPREAD -->
+        <div class="book-viewport-wrapper">
+          <div class="book-container" id="bookContainer">
+            <!-- Book Spine Shadow Effect -->
+            <div class="book-hardcover-shadow"></div>
+            
+            <div class="book-spread" id="bookSpread">
+              <!-- LEFT PAGE -->
+              <div class="book-page page-left" id="pageLeft">
+                <div class="page-inner-header">
+                  <span class="page-header-title" id="pageLeftHeader">Story Title</span>
+                </div>
+                <div class="page-inner-body" id="pageLeftBody">
+                  <!-- Rendered Page Content -->
+                </div>
+                <div class="page-inner-footer">
+                  <span class="page-num" id="pageLeftNum">1</span>
+                </div>
+                <div class="page-spine-gradient spine-left"></div>
+              </div>
+
+              <!-- CENTER SEAM / GUTTER -->
+              <div class="book-gutter">
+                <div class="gutter-spine"></div>
+              </div>
+
+              <!-- RIGHT PAGE -->
+              <div class="book-page page-right" id="pageRight">
+                <div class="page-inner-header">
+                  <span class="page-header-scene" id="pageRightHeader">Chapter 1</span>
+                </div>
+                <div class="page-inner-body" id="pageRightBody">
+                  <!-- Rendered Page Content -->
+                </div>
+                <div class="page-inner-footer">
+                  <span class="page-num" id="pageRightNum">2</span>
+                </div>
+                <div class="page-spine-gradient spine-right"></div>
+              </div>
+            </div>
+
+            <!-- Page Turn Buttons overlayed on edges -->
+            <button class="page-turn-hitbox hitbox-left" id="hitboxLeft" title="Turn Left (Previous)"></button>
+            <button class="page-turn-hitbox hitbox-right" id="hitboxRight" title="Turn Right (Next)"></button>
+          </div>
+        </div>
+
+        <!-- Bottom Keyboard Help Hint -->
+        <div class="reader-footer-hint">
+          <span>Tip: Use <kbd>←</kbd> and <kbd>→</kbd> arrow keys to flip pages. Click anywhere on left/right page margins to navigate chapters.</span>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ============================================== -->
+    <!-- MODAL: TABLE OF CONTENTS DRAWER                -->
+    <!-- ============================================== -->
+    <div class="modal-backdrop" id="tocModal">
+      <div class="drawer-panel">
+        <div class="drawer-header">
+          <h3>Table of Contents</h3>
+          <button class="btn-close" id="btnCloseTOC">&times;</button>
+        </div>
+        <div class="drawer-content">
+          <div class="toc-list" id="tocList">
+            <!-- Dynamic TOC items -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================== -->
+    <!-- MODAL: SAVED NOVELS LIBRARY                    -->
+    <!-- ============================================== -->
+    <div class="modal-backdrop" id="savedModal">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3>📚 Novel Library</h3>
+          <button class="btn-close" id="btnCloseSaved">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="saved-stories-list" id="savedStoriesList">
+            <p class="empty-state">Loading saved stories...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NOTIFICATION TOAST -->
+    <div id="toastNotification" class="toast-notification"></div>
+
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

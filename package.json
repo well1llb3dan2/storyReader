@@ -1,0 +1,14 @@
+{
+  "name": "story-reader",
+  "version": "1.0.0",
+  "description": "AI Storyboard and Novel Generator using Ollama hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  }
+}
