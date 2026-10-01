@@ -36,11 +36,8 @@ export function setupStoryboardListeners({ onStartGeneration, onBackToConcept, o
 
 function buildDefaultChapterImagePrompt(ch, storyTitle = '', storyPrompt = '') {
   if (ch.imagePrompt && ch.imagePrompt.trim()) return ch.imagePrompt;
-  const chars = Array.isArray(ch.characters) ? ch.characters.join(', ') : (ch.characters || 'Main character');
   const actionSummary = ch.summary || 'Engaged in pivotal narrative action';
-  const settingLoc = ch.setting || 'Dramatic environment';
-  const moodTone = ch.mood || 'Dramatic, atmospheric';
-  return `Subject: ${chars} in "${ch.title || 'Chapter'}" from "${storyTitle || 'Novel'}". ${actionSummary}. Setting: ${settingLoc}. Arrangement: Cinematic medium composition with dynamic framing. Camera and Light: 35mm lens, atmospheric volumetric lighting matching ${moodTone} mood. Palette and Style: Cinematic film still, hyper-photorealistic RAW 8K, Kodak Portra 400 analog film texture, rich environmental details.`;
+  return `Subject: Key events from "${ch.title || 'Chapter'}" in "${storyTitle || 'Novel'}". ${actionSummary}. Arrangement: Cinematic medium composition with dynamic framing. Camera and Light: 35mm lens, atmospheric volumetric lighting. Palette and Style: Cinematic film still, hyper-photorealistic RAW 8K, Kodak Portra 400 analog film texture, rich environmental details.`;
 }
 
 async function ensureKieApiKey() {
@@ -84,7 +81,6 @@ export function renderSceneCards(chaptersToRender) {
 
     const cleanTitle = cleanChapterTitle(ch.title, chNum);
     ch.title = cleanTitle;
-    const charsHtml = (ch.characters || []).map(c => `<span class="char-chip">${escapeHtml(c)}</span>`).join("");
     const defaultVisualPrompt = buildDefaultChapterImagePrompt(ch, state.story.title, state.story.prompt);
 
     card.innerHTML = `
@@ -94,7 +90,6 @@ export function renderSceneCards(chaptersToRender) {
           <h4 class="scene-title-text" contenteditable="true" title="Click to edit chapter title">${escapeHtml(cleanTitle)}</h4>
         </div>
         <div class="scene-badges">
-          <span class="meta-pill">${escapeHtml(ch.mood || "Dramatic")}</span>
           <span class="meta-pill">${ch.targetWords || defaultTarget} words</span>
         </div>
       </div>
@@ -134,30 +129,10 @@ export function renderSceneCards(chaptersToRender) {
         </div>
       </div>
 
-      <div class="scene-setting-row">
-        <span class="scene-setting-label">📍 Setting & Time:</span>
-        <span class="scene-setting-val">${escapeHtml(ch.setting || "Key Location")}</span>
-      </div>
-
-      <div class="scene-chars-row">
-        <span class="scene-chars-label">👥 Characters in Chapter:</span>
-        <div class="scene-chars-chips">${charsHtml || '<span class="char-chip">Main Characters</span>'}</div>
-      </div>
-
       <div class="scene-summary-box">
-        <label>Chapter Events & Narrative Progression:</label>
-        <textarea class="scene-summary-textarea" rows="3" placeholder="Describe what happens in this chapter...">${escapeHtml(ch.summary || "")}</textarea>
+        <label>Chapter Outline:</label>
+        <textarea class="scene-summary-textarea" rows="8" placeholder="Describe what happens in this chapter...">${escapeHtml(ch.summary || "")}</textarea>
       </div>
-
-      ${ch.characterActions ? `
-      <div class="scene-meta-details">
-        <small style="color:var(--text-dim);"><strong>Actions:</strong> ${escapeHtml(ch.characterActions)}</small>
-      </div>` : ''}
-
-      ${ch.suggestedDialogue ? `
-      <div class="scene-meta-details">
-        <small style="color:var(--accent-gold-light);"><strong>Dialogue Hints:</strong> ${escapeHtml(ch.suggestedDialogue)}</small>
-      </div>` : ''}
     `;
 
     // Hook up Card Title & Summary edits

@@ -1,6 +1,6 @@
 # StoryReader — AI Novel Studio & Open Book Reader
 
-A local Node.js web application that interfaces directly with your locally running **Ollama** server (using `hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P`) for complete long-form novel generation from a premise.
+A local Node.js web application that interfaces directly with your locally running **Ollama** server (using `hf.co/DavidAU/Gemma-The-Writer-Mighty-Sword-9B-GGUF:Q6_K`) for complete long-form novel generation from a premise.
 
 ---
 
@@ -12,7 +12,7 @@ A local Node.js web application that interfaces directly with your locally runni
    - Interactive storyboard card grid with inline editable summaries.
 
 2. **Sequential One-by-One Novel Generation**:
-   - Feeds each scene sequentially into `hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P` as the previous finishes.
+   - Feeds each scene sequentially into `hf.co/DavidAU/Gemma-The-Writer-Mighty-Sword-9B-GGUF:Q6_K` as the previous finishes.
    - Preserves narrative context, preceding summaries, and continuity excerpts.
    - Standard dialogue quotation marks and immersive narrative prose.
    - Live stream preview, progress bar, word counter, and scene queue sidebar.
@@ -38,7 +38,7 @@ A local Node.js web application that interfaces directly with your locally runni
 ### 1. Ensure Ollama is Running
 Make sure your local Ollama instance is running and has the model pulled:
 ```bash
-ollama run hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P
+ollama run hf.co/DavidAU/Gemma-The-Writer-Mighty-Sword-9B-GGUF:Q6_K
 ```
 
 ### 2. Start the Server

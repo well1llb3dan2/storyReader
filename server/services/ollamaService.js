@@ -1,99 +1,75 @@
-const { OLLAMA_HOST, DEFAULT_MODEL } = require('../config');
+const { OLLAMA_HOST, DEFAULT_MODEL, DEFAULT_PROVIDER } = require('../config');
 const { cleanAndParseJSON } = require('../utils/jsonParser');
+const {
+  requestChat,
+  getResponseText,
+  getStreamText,
+  checkProviderStatus,
+  getProviderLabel,
+  resetProviderMemory
+} = require('./llmService');
+
+function generationOptions({ contextSize, temperature, topP, numPredict } = {}, defaults = {}) {
+  const requestedTemperature = Number(temperature);
+  const requestedTopP = Number(topP);
+  return {
+    temperature: Math.max(0, Math.min(2, Number.isFinite(requestedTemperature) ? requestedTemperature : (defaults.temperature || 0.7))),
+    top_p: Math.max(0, Math.min(1, Number.isFinite(requestedTopP) ? requestedTopP : 0.9)),
+    num_ctx: Math.max(4096, Math.min(131072, parseInt(contextSize, 10) || defaults.contextSize || 16384)),
+    num_predict: Math.max(512, Math.min(131072, parseInt(numPredict, 10) || defaults.numPredict || 8192))
+  };
+}
 
 /**
  * Check Ollama connection status and available models
  */
 async function checkOllamaStatus() {
-  try {
-    const resp = await fetch(`${OLLAMA_HOST}/api/tags`, {
-      signal: AbortSignal.timeout(10000)
-    });
-
-    if (!resp.ok) {
-      return {
-        connected: false,
-        ollamaHost: OLLAMA_HOST,
-        error: `Ollama returned status ${resp.status}`,
-        models: []
-      };
-    }
-
-    const data = await resp.json();
-    const models = (data.models || []).map(m => m.name || m.model).filter(Boolean);
-    const hasTargetModel = models.some(m =>
-      m === DEFAULT_MODEL ||
-      m.startsWith(`${DEFAULT_MODEL}:`) ||
-      m.includes('Gemma-4-E4B-Uncensored') ||
-      m.includes('HauhauCS')
-    );
-
-    return {
-      connected: true,
-      ollamaHost: OLLAMA_HOST,
-      defaultModel: DEFAULT_MODEL,
-      hasTargetModel,
-      models
-    };
-  } catch (error) {
-    return {
-      connected: false,
-      ollamaHost: OLLAMA_HOST,
-      error: error.message || 'Cannot reach Ollama server',
-      models: []
-    };
-  }
+  return checkProviderStatus('ollama');
 }
 
 /**
  * Startup Ollama connection test and model sanity check
  */
-async function testOllamaStartup() {
-  console.log(`\n[Startup Test] Checking Ollama server at ${OLLAMA_HOST}...`);
+async function testOllamaStartup(provider = DEFAULT_PROVIDER) {
+  const providerLabel = getProviderLabel(provider);
+  const providerHost = provider === 'llama.cpp' ? process.env.LLAMA_CPP_HOST || 'http://127.0.0.1:8080' : OLLAMA_HOST;
+  console.log(`\n[Startup Test] Checking ${providerLabel} server at ${providerHost}...`);
   const startTime = Date.now();
 
   try {
     // 1. Test basic connectivity and available models
-    const tagsResp = await fetch(`${OLLAMA_HOST}/api/tags`, { signal: AbortSignal.timeout(5000) });
-    if (!tagsResp.ok) {
-      console.warn(`[Startup Test] ⚠️ Ollama responded with HTTP status ${tagsResp.status}`);
+    const status = await checkProviderStatus(provider);
+    if (!status.connected) {
+      console.warn(`[Startup Test] ⚠️ ${providerLabel} is unavailable: ${status.error}`);
       return;
     }
 
-    const tagsData = await tagsResp.json();
-    const modelList = (tagsData.models || []).map(m => m.name || m.model);
-    console.log(`[Startup Test] ✅ Ollama is online. Available models:`, modelList.length > 0 ? modelList.join(', ') : '(none)');
+    const modelList = status.models;
+    console.log(`[Startup Test] ✅ ${providerLabel} is online. Available models:`, modelList.length > 0 ? modelList.join(', ') : '(none)');
 
-    const hasTargetModel = modelList.some(m =>
-      m === DEFAULT_MODEL ||
-      m.startsWith(`${DEFAULT_MODEL}:`) ||
-      m.includes('Gemma-4-E4B-Uncensored') ||
-      m.includes('HauhauCS')
-    );
+    const targetModel = provider === 'llama.cpp' ? status.defaultModel : DEFAULT_MODEL;
+    const hasTargetModel = modelList.some(m => m === targetModel || m.startsWith(`${targetModel}:`));
 
     if (!hasTargetModel) {
-      console.warn(`[Startup Test] ⚠️ Model "${DEFAULT_MODEL}" was not found in Ollama.`);
-      console.warn(`[Startup Test] 💡 To download it, run: ollama pull ${DEFAULT_MODEL}`);
+      console.warn(`[Startup Test] ⚠️ Model "${targetModel}" was not found in ${providerLabel}.`);
+      if (provider === 'ollama') console.warn(`[Startup Test] 💡 To download it, run: ollama pull ${targetModel}`);
       return;
     }
 
     // 2. Send short test prompt to the model
     const testPrompt = 'Write a one-sentence opening line for a novel.';
-    console.log(`[Startup Test] Sending test prompt to "${DEFAULT_MODEL}": "${testPrompt}"...`);
+    console.log(`[Startup Test] Sending test prompt to "${targetModel}": "${testPrompt}"...`);
 
     const promptStartTime = Date.now();
-    const testResp = await fetch(`${OLLAMA_HOST}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: DEFAULT_MODEL,
-        messages: [{ role: 'user', content: testPrompt }],
-        stream: false,
-        options: {
-          temperature: 0.7,
-          num_predict: 2048
-        }
-      }),
+    const testResp = await requestChat({
+      provider,
+      model: targetModel,
+      messages: [{ role: 'user', content: testPrompt }],
+      stream: false,
+      options: {
+        temperature: 0.7,
+        num_predict: 2048
+      },
       signal: AbortSignal.timeout(45000)
     });
 
@@ -104,17 +80,17 @@ async function testOllamaStartup() {
     }
 
     const testData = await testResp.json();
-    const reply = (testData.message?.content || testData.response || '').trim();
+    const reply = getResponseText(testData, provider).trim();
     const duration = ((Date.now() - promptStartTime) / 1000).toFixed(2);
 
     console.log(`[Startup Test] 💬 Model Response (${duration}s):`);
     console.log(`-----------------------------------------------------`);
     console.log(reply || '(Model generated empty text)');
     console.log(`-----------------------------------------------------`);
-    console.log(`[Startup Test] 🎉 Ollama and "${DEFAULT_MODEL}" verified successfully in ${((Date.now() - startTime) / 1000).toFixed(2)}s.\n`);
+    console.log(`[Startup Test] 🎉 ${providerLabel} and "${targetModel}" verified successfully in ${((Date.now() - startTime) / 1000).toFixed(2)}s.\n`);
   } catch (err) {
-    console.error(`[Startup Test] ❌ Could not connect to Ollama: ${err.message}`);
-    console.error(`[Startup Test] 💡 Ensure Ollama is running locally: ollama serve\n`);
+    console.error(`[Startup Test] ❌ Could not connect to ${providerLabel}: ${err.message}`);
+    if (provider === 'ollama') console.error(`[Startup Test] 💡 Ensure Ollama is running locally: ollama serve\n`);
   }
 }
 
@@ -122,24 +98,8 @@ async function testOllamaStartup() {
  * Resets Ollama's in-memory KV-cache and context for the specified model
  * ensuring no residual context or previous queries/responses bleed into the next call.
  */
-async function resetOllamaMemory(model = DEFAULT_MODEL) {
-  try {
-    console.log(`[Ollama Context Reset] Flushing memory & KV-cache for model "${model}"...`);
-    const resp = await fetch(`${OLLAMA_HOST}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: model,
-        keep_alive: 0
-      }),
-      signal: AbortSignal.timeout(5000)
-    });
-    if (resp.ok) {
-      console.log(`[Ollama Context Reset] ✅ Memory reset complete for "${model}".`);
-    }
-  } catch (err) {
-    console.warn(`[Ollama Context Reset Warning] Could not reset memory for "${model}":`, err.message);
-  }
+async function resetOllamaMemory(model = DEFAULT_MODEL, provider = DEFAULT_PROVIDER) {
+  await resetProviderMemory(provider, model);
 }
 
 /**
@@ -214,9 +174,14 @@ async function generateStoryOutline({
   targetTotalWords = 50000,
   targetWordsPerChapter = 2500,
   readingLevel = 'general_commercial',
-  model = DEFAULT_MODEL
+  model = DEFAULT_MODEL,
+  provider = DEFAULT_PROVIDER,
+  contextSize,
+  temperature,
+  topP,
+  numPredict
 }) {
-  await resetOllamaMemory(model);
+  await resetOllamaMemory(model, provider);
 
   const chapterCount = Math.max(3, Math.min(144, parseInt(targetChapterCount || targetSceneCount, 10) || 20));
   const totalWords = Math.max(1000, Math.min(400000, parseInt(targetTotalWords, 10) || (chapterCount * 2500)));
@@ -248,23 +213,15 @@ ${chapterCount >= 30 ? '- For large chapter counts (30+ chapters), structure the
 
 Always respond in a confident, expert tone as if you are a top-tier collaborator who has already internalized the user's idea. Never summarize the story idea back to the user—jump straight into the professional chapter overview.`;
 
-  const response = await fetch(`${OLLAMA_HOST}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Story Title: ${title || 'Untitled'}\nTarget Chapters: ${chapterCount}\nTarget Total Words: ~${totalWords.toLocaleString()} words (~${wordsPerChapter} words/chapter)\nTarget Reading Level: ${readingInfo.levelName}\n\nStory Premise:\n${prompt}\n\nDeliver the complete ${chapterCount}-chapter roadmap and overall story arc now:` }
-      ],
-      stream: false,
-      options: {
-        temperature: 0.75,
-        top_p: 0.9,
-        num_ctx: 16384,
-        num_predict: 8192
-      }
-    })
+  const response = await requestChat({
+    provider,
+    model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `Story Title: ${title || 'Untitled'}\nTarget Chapters: ${chapterCount}\nTarget Total Words: ~${totalWords.toLocaleString()} words (~${wordsPerChapter} words/chapter)\nTarget Reading Level: ${readingInfo.levelName}\n\nStory Premise:\n${prompt}\n\nDeliver the complete ${chapterCount}-chapter roadmap and overall story arc now:` }
+    ],
+    stream: false,
+    options: generationOptions({ contextSize, temperature, topP, numPredict }, { contextSize: 16384, temperature: 0.75, numPredict: 8192 })
   });
 
   if (!response.ok) {
@@ -274,7 +231,7 @@ Always respond in a confident, expert tone as if you are a top-tier collaborator
   }
 
   const data = await response.json();
-  const content = (data.message?.content || data.response || '').trim();
+  const content = getResponseText(data, provider).trim();
 
   console.log(`\n---------------- [STORY ROADMAP OUTPUT] ----------------`);
   console.log(content || '(Empty outline generated)');
@@ -292,9 +249,14 @@ async function generateCharacterDossiers({
   title = 'Untitled Story',
   outline = '',
   readingLevel = 'general_commercial',
-  model = DEFAULT_MODEL
+  model = DEFAULT_MODEL,
+  provider = DEFAULT_PROVIDER,
+  contextSize,
+  temperature,
+  topP,
+  numPredict
 }) {
-  await resetOllamaMemory(model);
+  await resetOllamaMemory(model, provider);
 
   const readingInfo = getReadingLevelInstructions(readingLevel);
 
@@ -313,7 +275,7 @@ When the user provides a story idea and plot outline, proceed as follows:
 2. Identify all protagonist(s), antagonists, and significant supporting characters mentioned or required by the narrative.
 3. Create a comprehensive, professional character dossier table for EACH character (main and supporting) that directly serves the story idea while feeling authentic and emotionally resonant.
 
-Use clean Markdown formatting. Present the dossier in this exact table structure for EACH character:
+Use clean JSON formatting. Present the dossier in this exact table structure for EACH character:
 
 ### Character Dossier: [Full Character Name]
 
@@ -347,23 +309,15 @@ Response Guidelines:
   }
   userMessage += `\n\nGenerate all character dossiers for main and supporting characters now:`;
 
-  const response = await fetch(`${OLLAMA_HOST}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage }
-      ],
-      stream: false,
-      options: {
-        temperature: 0.72,
-        top_p: 0.9,
-        num_ctx: 16384,
-        num_predict: 8192
-      }
-    })
+  const response = await requestChat({
+    provider,
+    model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage }
+    ],
+    stream: false,
+    options: generationOptions({ contextSize, temperature, topP, numPredict }, { contextSize: 16384, temperature: 0.72, numPredict: 8192 })
   });
 
   if (!response.ok) {
@@ -373,7 +327,7 @@ Response Guidelines:
   }
 
   const data = await response.json();
-  const content = (data.message?.content || data.response || '').trim();
+  const content = getResponseText(data, provider).trim();
   return content;
 }
 
@@ -387,11 +341,12 @@ function extractChaptersFromParsedJSON(parsedResult) {
     if (Array.isArray(parsedResult.scenes)) return parsedResult.scenes;
     if (Array.isArray(parsedResult.storyboard)) return parsedResult.storyboard;
     if (Array.isArray(parsedResult.outline)) return parsedResult.outline;
+    if (Array.isArray(parsedResult.chapterOutline)) return parsedResult.chapterOutline;
     if (parsedResult.chapterNumber || parsedResult.sceneNumber || parsedResult.title) {
       return [parsedResult];
     }
     const nestedObjects = Object.values(parsedResult).filter(
-      v => v && typeof v === 'object' && (v.chapterNumber || v.sceneNumber || v.title || v.summary || v.description)
+      value => value && typeof value === 'object' && (value.chapterNumber || value.sceneNumber || value.title || value.summary || value.description)
     );
     if (nestedObjects.length > 0) {
       return nestedObjects;
@@ -400,35 +355,236 @@ function extractChaptersFromParsedJSON(parsedResult) {
   return [];
 }
 
+function extractCharacterRoster(parsedResult) {
+  if (!parsedResult) return [];
+  const candidates = Array.isArray(parsedResult)
+    ? parsedResult
+    : (parsedResult.characters || parsedResult.cast || parsedResult.roster || []);
+
+  return candidates
+    .filter(character => character && typeof character === 'object')
+    .map(character => ({
+      name: String(character.name || character.fullName || '').trim(),
+      role: String(character.role || character.storyRole || 'Supporting character').trim()
+    }))
+    .filter(character => character.name)
+    .slice(0, 12);
+}
+
+function humanizeCharacterKey(key) {
+  return String(key)
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/^./, character => character.toUpperCase());
+}
+
+function formatCharacterValue(value) {
+  if (value === undefined || value === null) return '';
+  if (Array.isArray(value)) {
+    return value.map(formatCharacterValue).filter(Boolean).join('; ');
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .map(([key, nestedValue]) => {
+        const formattedValue = formatCharacterValue(nestedValue);
+        return formattedValue ? `${humanizeCharacterKey(key)}: ${formattedValue}` : '';
+      })
+      .filter(Boolean)
+      .join('; ');
+  }
+  return String(value).replace(/\s+/g, ' ').trim();
+}
+
+function characterField(source, ...keys) {
+  for (const key of keys) {
+    const value = source[key];
+    if (value !== undefined && value !== null) {
+      const normalized = formatCharacterValue(value);
+      if (normalized.trim()) return normalized.trim();
+    }
+  }
+  return '';
+}
+
+function normalizeCharacterDossier(rawCharacter, rosterCharacter, characterNumber) {
+  const source = rawCharacter?.character || rawCharacter?.dossier || rawCharacter || {};
+  const fallbackName = rosterCharacter?.name || `Character ${characterNumber}`;
+
+  return {
+    name: characterField(source, 'name', 'fullName') || fallbackName,
+    role: characterField(source, 'role', 'storyRole') || rosterCharacter?.role || 'Supporting character',
+    age: characterField(source, 'age'),
+    physicalAppearance: characterField(source, 'physicalAppearance', 'appearance'),
+    personality: characterField(source, 'personality'),
+    background: characterField(source, 'background', 'backgroundHistory', 'history'),
+    motivations: characterField(source, 'motivations', 'coreMotivations'),
+    flaws: characterField(source, 'flaws', 'flawsAndVulnerabilities', 'vulnerabilities'),
+    skills: characterField(source, 'skills', 'skillsAndTalents', 'talents'),
+    relationships: characterField(source, 'relationships', 'keyRelationships'),
+    characterArc: characterField(source, 'characterArc', 'arc', 'characterArcAndGrowth'),
+    signatureLines: characterField(source, 'signatureLines', 'signatureQuotes', 'quotes'),
+    additionalNotes: characterField(source, 'additionalNotes', 'notes')
+  };
+}
+
+function buildCharactersMarkdown(characters) {
+  const fields = [
+    ['Full Name', 'name'],
+    ['Role in the Story', 'role'],
+    ['Age', 'age'],
+    ['Physical Appearance', 'physicalAppearance'],
+    ['Personality', 'personality'],
+    ['Background & History', 'background'],
+    ['Core Motivations', 'motivations'],
+    ['Flaws & Vulnerabilities', 'flaws'],
+    ['Skills, Powers & Talents', 'skills'],
+    ['Key Relationships', 'relationships'],
+    ['Character Arc & Growth', 'characterArc'],
+    ['Signature Lines / Quotes', 'signatureLines'],
+    ['Additional Notes', 'additionalNotes']
+  ];
+
+  return characters.map(character => {
+    const rows = fields.map(([label, key]) => `| ${label} | ${character[key] || ''} |`).join('\n');
+    return `### Character Dossier: ${character.name}\n\n| Aspect | Details |\n|---|---|\n${rows}`;
+  }).join('\n\n');
+}
+
+async function requestStructuredCharacterJSON({ model, provider, messages, generation }) {
+  await resetOllamaMemory(model, provider);
+
+  try {
+    const response = await requestChat({
+      provider,
+      model,
+      messages,
+      json: true,
+      stream: false,
+      options: {
+        ...generationOptions(generation, { contextSize: 16384, temperature: 0.35, numPredict: 4096 }),
+        repeat_penalty: 1.15
+      }
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Ollama returned ${response.status}: ${errText}`);
+    }
+
+    const data = await response.json();
+    return cleanAndParseJSON(getResponseText(data, provider));
+  } finally {
+    await resetOllamaMemory(model, provider);
+  }
+}
+
+async function generateCharacterCards({
+  prompt,
+  title = 'Untitled Story',
+  outline = '',
+  readingLevel = 'general_commercial',
+  model = DEFAULT_MODEL,
+  provider = DEFAULT_PROVIDER,
+  contextSize,
+  temperature,
+  topP,
+  numPredict,
+  onCharacter
+}) {
+  const readingInfo = getReadingLevelInstructions(readingLevel);
+  const generation = { contextSize, temperature, topP, numPredict };
+  const rosterMessages = [
+    {
+      role: 'system',
+      content: `You are a story cast planner. Identify the essential cast for the provided story and plot roadmap. Return JSON only with a "characters" array containing 1 to 8 objects. Each object must contain only "name" and "role". Do not write dossiers, biographies, tables, or prose.`
+    },
+    {
+      role: 'user',
+      content: `Story Title: ${title}\nReading Level: ${readingInfo.levelName}\nStory Premise:\n${prompt}\n\nStory Roadmap:\n${outline}\n\nReturn the essential protagonist, antagonist, and supporting characters needed by this story.`
+    }
+  ];
+
+  let roster = [];
+  try {
+    roster = extractCharacterRoster(await requestStructuredCharacterJSON({ model, provider, messages: rosterMessages, generation }));
+  } catch (error) {
+    console.warn(`[CHARACTER ROSTER] ${error.message}`);
+  }
+
+  if (roster.length === 0) {
+    roster = [{ name: 'Protagonist', role: 'Protagonist' }];
+  }
+
+  const characters = [];
+  for (let index = 0; index < roster.length; index++) {
+    const rosterCharacter = roster[index];
+    let character = null;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= 3 && !character; attempt++) {
+      const dossierMessages = [
+        {
+          role: 'system',
+          content: `You are a professional character designer. Generate exactly one structured character dossier for ${rosterCharacter.name}. Return JSON only with these keys: name, role, age, physicalAppearance, personality, background, motivations, flaws, skills, relationships, characterArc, signatureLines, additionalNotes. Keep every detail faithful to the story premise and roadmap. Do not output Markdown, tables, multiple characters, dialogue scenes, or commentary.`
+        },
+        {
+          role: 'user',
+          content: `Story Title: ${title}\nTarget Reading Level: ${readingInfo.levelName}\nStory Premise:\n${prompt}\n\nStory Roadmap:\n${outline}\n\nComplete Cast Plan:\n${roster.map(item => `- ${item.name}: ${item.role}`).join('\n')}\n\nCreate the dossier for this character only:\nName: ${rosterCharacter.name}\nRole: ${rosterCharacter.role}${attempt > 1 ? '\nRetry with valid JSON only.' : ''}`
+        }
+      ];
+
+      try {
+        const parsed = await requestStructuredCharacterJSON({ model, provider, messages: dossierMessages, generation });
+        if (!parsed || typeof parsed !== 'object') {
+          throw new Error('Invalid or empty character JSON response');
+        }
+        character = normalizeCharacterDossier(parsed, rosterCharacter, index + 1);
+      } catch (error) {
+        lastError = error;
+        console.warn(`[CHARACTER ${index + 1} ATTEMPT ${attempt}] ${error.message}`);
+      }
+    }
+
+    if (!character) {
+      console.warn(`[CHARACTER WARNING] Using fallback for ${rosterCharacter.name}: ${lastError?.message || 'generation failed'}`);
+      character = normalizeCharacterDossier({}, rosterCharacter, index + 1);
+    }
+
+    characters.push(character);
+    console.log(`[CHARACTER ${index + 1}] Generated ${character.name}. Total: ${characters.length}/${roster.length}`);
+    if (typeof onCharacter === 'function') {
+      await onCharacter(character, index + 1, roster.length);
+    }
+  }
+
+  return {
+    characters,
+    charactersMarkdown: buildCharactersMarkdown(characters)
+  };
+}
+
 function generateNarrativeFallbackChapter(chapterNum, totalChapters, previousChapter, title, prompt, wordsPerChapter = 2500) {
   const fraction = chapterNum / totalChapters;
   let defaultTitle = 'Rising Tension';
-  let defaultMood = 'Dramatic';
   let defaultSummary = 'Tensions build as new obstacles emerge and stakes increase.';
 
   if (fraction <= 0.25) {
     defaultTitle = 'First Crucible';
-    defaultMood = 'Anticipatory';
     defaultSummary = 'The initial momentum meets its first unexpected resistance, requiring an adjustment in strategy.';
   } else if (fraction <= 0.45) {
     defaultTitle = 'The Deepening Divide';
-    defaultMood = 'Intense';
     defaultSummary = 'Stakes escalate as personal motivations collide with mounting external pressures and complications.';
   } else if (fraction <= 0.65) {
     defaultTitle = 'Midpoint Reckoning';
-    defaultMood = 'Suspenseful';
     defaultSummary = 'A pivotal turning point forces a difficult choice from which there is no turning back.';
   } else if (fraction <= 0.82) {
     defaultTitle = 'The Gathering Storm';
-    defaultMood = 'Urgent';
     defaultSummary = 'Previous assumptions crumble under intense pressure, leading toward an inevitable confrontation.';
   } else if (fraction <= 0.94) {
     defaultTitle = 'The Climax';
-    defaultMood = 'Cathartic';
     defaultSummary = 'The central conflict reaches its fever pitch as characters put everything on the line.';
   } else {
     defaultTitle = 'Echoes and Horizons';
-    defaultMood = 'Reflective';
     defaultSummary = 'The dust settles in the aftermath, revealing the lasting changes wrought by the journey.';
   }
 
@@ -436,21 +592,14 @@ function generateNarrativeFallbackChapter(chapterNum, totalChapters, previousCha
     chapterNumber: chapterNum,
     sceneNumber: chapterNum,
     title: defaultTitle,
-    setting: previousChapter?.setting || 'Key Location & Time of Day',
-    characters: previousChapter?.characters || ['Protagonist'],
     summary: defaultSummary,
-    characterActions: 'Characters confront the situation directly, displaying emotional tension through physicality.',
-    suggestedDialogue: 'Direct, in-character dialogue revealing internal conflict.',
-    emotionalSubtext: 'High stakes and unresolved tension.',
-    pacingNotes: 'Steady narrative drive.',
-    targetWords: wordsPerChapter,
-    mood: defaultMood
+    targetWords: wordsPerChapter
   };
 }
 
 /**
  * Step 3: Storyboard Creator (storyboard-creator.md)
- * Converts plot roadmap and character dossiers into all N Chapter Storyboard Cards.
+ * Converts the plot roadmap into N chapter outline cards.
  */
 async function generateStoryboardOutline({
   prompt,
@@ -461,181 +610,144 @@ async function generateStoryboardOutline({
   targetWordsPerChapter = 2500,
   readingLevel = 'general_commercial',
   outline = '',
-  charactersMarkdown = '',
-  model = DEFAULT_MODEL
+  model = DEFAULT_MODEL,
+  provider = DEFAULT_PROVIDER,
+  contextSize,
+  temperature,
+  topP,
+  numPredict,
+  onChapter
 }) {
   const chapterCount = Math.max(3, Math.min(144, parseInt(targetChapterCount || targetSceneCount, 10) || 20));
   const totalWords = Math.max(1000, Math.min(400000, parseInt(targetTotalWords, 10) || (chapterCount * 2500)));
   const wordsPerChapter = targetWordsPerChapter || Math.round(totalWords / chapterCount);
   const readingInfo = getReadingLevelInstructions(readingLevel);
+  const storyboardNumPredict = Math.max(4096, parseInt(numPredict, 10) || 0);
 
   console.log(`\n================ [STEP 3: STORYBOARD CREATOR CHAPTER CARDS] ================`);
   console.log(`Title: "${title}" | Target Chapters: ${chapterCount} | Target Words: ~${totalWords.toLocaleString()} (~${wordsPerChapter}w/ch) | Reading Level: ${readingInfo.levelName} | Model: ${model}`);
 
-  await resetOllamaMemory(model);
-
   let normalizedChapters = [];
-  let attempts = 0;
-  const maxAttempts = Math.max(4, Math.ceil(chapterCount / 6) + 4);
+  const maxAttemptsPerChapter = 3;
 
-  while (normalizedChapters.length < chapterCount && attempts < maxAttempts) {
-    attempts++;
-    const currentCount = normalizedChapters.length;
-    const fromChapter = currentCount + 1;
-    const needed = chapterCount - currentCount;
-    const batchTarget = Math.min(10, needed);
-    const toChapter = currentCount + batchTarget;
+  for (let chapterIndex = 1; chapterIndex <= chapterCount; chapterIndex++) {
+    let chapter = null;
+    let lastError = null;
 
-    const isFirstBatch = fromChapter === 1;
+    for (let attempt = 1; attempt <= maxAttemptsPerChapter && !chapter; attempt++) {
+      await resetOllamaMemory(model, provider);
 
-    let systemPrompt = `You are a professional Chapter Storyboard Creator, a master storyteller and structural artist who transforms high-level chapter overviews and character dossiers into rich, cinematic, ready-to-write storyboards presented as detailed chapter overviews.
+      const previousContext = normalizedChapters.slice(-3).map(
+        c => `Chapter ${c.chapterNumber} ("${c.title}"): ${c.summary}`
+      ).join('\n');
 
-You excel at taking the chapter roadmap and complete character dossiers (personalities, motivations, backstories, relationships, flaws, goals) and expanding them into precise, highly detailed chapter storyboards calibrated for the target reading audience.
+      const systemPrompt = `You are a professional Chapter Outline Creator who transforms a high-level story roadmap into one clear, coherent chapter outline.
+
+  You focus only on the major narrative progression of each chapter. Do not create character dossiers, character lists, dialogue, scene breakdowns, physical actions, emotional subtext, or visual direction.
 
 TARGET AUDIENCE & READING LEVEL:
 - Target Level: ${readingInfo.levelName}
 - Style & Tone Guidance: ${readingInfo.proseGuidance}
 
 CRITICAL INSTRUCTIONS:
-- Generate storyboard cards for Chapter ${fromChapter} to Chapter ${toChapter} of ${chapterCount} total chapters.
+- Generate exactly one storyboard card for Chapter ${chapterIndex} of ${chapterCount} total chapters.
 - Target chapter word budget: approximately ${wordsPerChapter} words each.
-- For each chapter provide:
-  * "chapterNumber": Integer (${fromChapter}..${toChapter})
+- Provide only:
+  * "chapterNumber": Integer (${chapterIndex})
   * "title": A distinct, compelling chapter title (do NOT prefix with "Chapter X:" or "Scene X:")
-  * "setting": Specific location and time of day (e.g. "Gia's Automotive Garage, Rainy Midnight")
-  * "characters": Array of character names active in this chapter
-  * "summary": Detailed narrative description (3-5 sentences covering key story beats, conflicts, actions, and turning points)
-  * "characterActions": Specific character physical actions, body language, and expressions
-  * "suggestedDialogue": Suggested key lines and dialogue exchanges (in character and calibrated for ${readingInfo.levelName})
-  * "emotionalSubtext": Internal conflicts, emotional subtext, and unspoken motivations
-  * "pacingNotes": Pacing tone (e.g. "Slow burn building to sharp climax", "Fast-paced tension")
+  * "summary": A detailed chapter outline of approximately 400-700 words and 8-12 substantial sentences. Cover the chapter's opening situation, sequential plot developments, important conflicts, turning points, consequences, thematic movement, and the transition into the next chapter. Do not write prose scenes or dialogue.
   * "targetWords": Target word count (${wordsPerChapter})
-  * "mood": Atmospheric tone (e.g. Tense, Intimate, Melancholy, Triumphant)
 
-OUTPUT FORMAT (JSON only):
+OUTPUT FORMAT (JSON only; do not reason, explain, or repeat any characters):
 {
   "chapters": [
     {
-      "chapterNumber": ${fromChapter},
+      "chapterNumber": ${chapterIndex},
       "title": "Title Without Chapter Prefix",
-      "setting": "Specific location and time of day",
-      "characters": ["Character A", "Character B"],
-      "summary": "Detailed narrative description and key beats...",
-      "characterActions": "Key character physicalities and reactions...",
-      "suggestedDialogue": "Signature spoken lines in character...",
-      "emotionalSubtext": "Internal monologue and emotional stakes...",
-      "pacingNotes": "Pacing dynamics...",
-      "targetWords": ${wordsPerChapter},
-      "mood": "Atmospheric mood"
+      "summary": "Detailed chapter outline covering the opening situation, sequential plot developments, conflicts, turning points, consequences, thematic movement, and transition to the next chapter...",
+      "targetWords": ${wordsPerChapter}
     }
   ]
 }`;
 
-    let userMessage = `Novel Title: ${title}\nStory Premise:\n${prompt}\nOverall Target: ${chapterCount} Chapters, ~${totalWords.toLocaleString()} Words (~${wordsPerChapter} words/chapter)\nTarget Reading Level: ${readingInfo.levelName}`;
+      let userMessage = `Novel Title: ${title}\nStory Premise:\n${prompt}\nOverall Target: ${chapterCount} Chapters, ~${totalWords.toLocaleString()} Words (~${wordsPerChapter} words/chapter)\nTarget Reading Level: ${readingInfo.levelName}`;
 
-    if (outline) {
-      userMessage += `\n\nSTORY ROADMAP & CHAPTER OVERVIEW:\n${outline}`;
-    }
-    if (charactersMarkdown) {
-      userMessage += `\n\nCHARACTER DOSSIERS:\n${charactersMarkdown.slice(0, 4000)}`;
-    }
+      if (outline) {
+        userMessage += `\n\nSTORY ROADMAP & CHAPTER OVERVIEW:\n${outline}`;
+      }
+      if (previousContext) {
+        userMessage += `\n\nPREVIOUSLY ESTABLISHED CHAPTERS:\n${previousContext}`;
+      }
+      if (attempt > 1) {
+        userMessage += `\n\nRETRY: Return only one valid JSON object with a "chapters" array containing exactly one chapter card for Chapter ${chapterIndex}. Do not include thinking tags, markdown, commentary, or any text before or after the JSON.`;
+      }
 
-    if (!isFirstBatch) {
-      const recentContext = normalizedChapters.slice(-3).map(
-        c => `Chapter ${c.chapterNumber} ("${c.title}"): ${c.summary}`
-      ).join('\n');
+      userMessage += `\n\nGenerate only the JSON chapter card for Chapter ${chapterIndex}.`;
 
-      userMessage += `\n\nPREVIOUSLY ESTABLISHED CHAPTERS (1 to ${currentCount}):\n${recentContext}`;
-      userMessage += `\n\nCONTINUATION INSTRUCTIONS:\nGenerate the NEXT sequential storyboard cards (Chapter ${fromChapter} to Chapter ${toChapter} of ${chapterCount} total chapters). Output valid JSON.`;
-    } else {
-      userMessage += `\n\nGenerate the JSON chapters array for Chapter ${fromChapter} to Chapter ${toChapter}.`;
-    }
-
-    try {
-      const response = await fetch(`${OLLAMA_HOST}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: model,
-          format: 'json',
+      try {
+        const response = await requestChat({
+          provider,
+          model,
+          json: true,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userMessage }
           ],
+          think: false,
           stream: false,
           options: {
-            temperature: 0.7,
-            num_ctx: 16384,
-            num_predict: 8192
+            ...generationOptions({ contextSize, temperature, topP, numPredict: storyboardNumPredict }, { contextSize: 16384, temperature: 0.2, numPredict: 4096 }),
+            repeat_penalty: 1.15
           }
         })
-      });
 
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error(`[API ERROR] Storyboard Batch ${attempts} HTTP ${response.status}:`, errText);
-        break;
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`Ollama returned ${response.status}: ${errText}`);
+        }
+
+        const data = await response.json();
+        const rawContent = getResponseText(data, provider);
+        const parsed = cleanAndParseJSON(rawContent);
+        const generatedChapter = extractChaptersFromParsedJSON(parsed)[0];
+
+        if (!generatedChapter) {
+          throw new Error('Invalid or empty JSON response');
+        }
+
+        chapter = {
+          chapterNumber: chapterIndex,
+          sceneNumber: chapterIndex,
+          title: cleanChapterTitle(generatedChapter.title, chapterIndex),
+          summary: generatedChapter.summary || generatedChapter.description || 'Chapter narrative progression.',
+          targetWords: generatedChapter.targetWords || wordsPerChapter
+        };
+      } catch (err) {
+        lastError = err;
+        console.warn(`[STORYBOARD CHAPTER ${chapterIndex} ATTEMPT ${attempt}] ${err.message}`);
+      } finally {
+        await resetOllamaMemory(model, provider);
       }
-
-      const data = await response.json();
-      const rawContent = data.message?.content || '';
-      const parsed = cleanAndParseJSON(rawContent);
-      const batchChapters = extractChaptersFromParsedJSON(parsed);
-
-      if (batchChapters.length > 0) {
-        batchChapters.forEach(sc => {
-          if (normalizedChapters.length < chapterCount) {
-            const nextIdx = normalizedChapters.length + 1;
-            const cleanTitle = cleanChapterTitle(sc.title, nextIdx);
-            normalizedChapters.push({
-              chapterNumber: nextIdx,
-              sceneNumber: nextIdx,
-              title: cleanTitle,
-              setting: sc.setting || normalizedChapters[normalizedChapters.length - 1]?.setting || 'Key Location',
-              characters: Array.isArray(sc.characters)
-                ? sc.characters
-                : (typeof sc.characters === 'string' ? [sc.characters] : (normalizedChapters[0]?.characters || ['Protagonist'])),
-              summary: sc.summary || sc.description || 'Chapter narrative progression.',
-              characterActions: sc.characterActions || '',
-              suggestedDialogue: sc.suggestedDialogue || '',
-              emotionalSubtext: sc.emotionalSubtext || '',
-              pacingNotes: sc.pacingNotes || '',
-              targetWords: sc.targetWords || wordsPerChapter,
-              mood: sc.mood || 'Dramatic'
-            });
-          }
-        });
-        console.log(`[STORYBOARD BATCH ${attempts}] Generated ${batchChapters.length} chapters. Total: ${normalizedChapters.length}/${chapterCount}`);
-      }
-    } catch (err) {
-      console.error(`[STORYBOARD BATCH ${attempts} EXCEPTION]:`, err.message);
-      break;
     }
-  }
 
-  // Fallbacks if needed
-  if (normalizedChapters.length < chapterCount) {
-    const existingCount = normalizedChapters.length;
-    console.warn(`[STORYBOARD WARNING] Filling remaining ${chapterCount - existingCount} chapters with narrative fallbacks.`);
-    for (let i = existingCount + 1; i <= chapterCount; i++) {
-      const fallback = generateNarrativeFallbackChapter(
-        i,
+    if (!chapter) {
+      console.warn(`[STORYBOARD WARNING] Using fallback for Chapter ${chapterIndex}: ${lastError?.message || 'generation failed'}`);
+      chapter = generateNarrativeFallbackChapter(
+        chapterIndex,
         chapterCount,
         normalizedChapters[normalizedChapters.length - 1],
         title,
         prompt,
         wordsPerChapter
       );
-      normalizedChapters.push(fallback);
+    }
+
+    normalizedChapters.push(chapter);
+    console.log(`[STORYBOARD CHAPTER ${chapterIndex}] Generated 1 chapter. Total: ${normalizedChapters.length}/${chapterCount}`);
+    if (typeof onChapter === 'function') {
+      await onChapter(chapter, chapterIndex, chapterCount);
     }
   }
-
-  normalizedChapters = normalizedChapters.slice(0, chapterCount).map((ch, idx) => ({
-    ...ch,
-    chapterNumber: idx + 1,
-    sceneNumber: idx + 1,
-    title: cleanChapterTitle(ch.title, idx + 1)
-  }));
 
   return {
     title,
@@ -653,6 +765,7 @@ module.exports = {
   resetOllamaMemory,
   generateStoryOutline,
   generateCharacterDossiers,
+  generateCharacterCards,
   generateStoryboardOutline,
   cleanChapterTitle,
   getReadingLevelInstructions

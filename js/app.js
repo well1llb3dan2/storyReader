@@ -23,6 +23,7 @@ import {
   prepareAndOpenReader
 } from "./stages/stageReader.js";
 import { openSavedStoriesModal } from "./modules/storyStorage.js";
+import { setupAISettings, applyAvailableModels, getStepAISettings, getAIProvider } from "./modules/aiSettings.js";
 
 // --- STAGE NAVIGATION ---
 export function canNavigateToStage(stageKey) {
@@ -45,7 +46,8 @@ export function setStage(newStage) {
     characters: el.stageViews.characters,
     storyboard: el.stageViews.storyboard,
     generating: el.stageViews.generating,
-    reader: el.stageViews.reader
+    reader: el.stageViews.reader,
+    settings: el.stageViews.settings
   };
 
   Object.keys(viewMap).forEach(key => {
@@ -76,19 +78,20 @@ export function setStage(newStage) {
 }
 
 // --- OLLAMA HEALTH CHECK ---
-export async function checkOllamaStatus() {
+export async function checkOllamaStatus(provider = getAIProvider()) {
   try {
-    const data = await fetchOllamaStatus();
+    const data = await fetchOllamaStatus(provider);
     state.ollamaStatus = data;
+    applyAvailableModels(data.models, data.defaultModel);
 
     if (data.connected) {
       if (data.hasTargetModel) {
-        el.ollamaStatusBadge.innerHTML = `<span class="status-dot dot-connected"></span><span class="status-text">Ollama: ${data.defaultModel} Ready</span>`;
+        el.ollamaStatusBadge.innerHTML = `<span class="status-dot dot-connected"></span><span class="status-text">${data.providerLabel}: ${data.defaultModel} Ready</span>`;
       } else {
-        el.ollamaStatusBadge.innerHTML = `<span class="status-dot dot-warning"></span><span class="status-text">Ollama Connected (${data.defaultModel} recommended)</span>`;
+        el.ollamaStatusBadge.innerHTML = `<span class="status-dot dot-warning"></span><span class="status-text">${data.providerLabel} Connected (${data.defaultModel} recommended)</span>`;
       }
     } else {
-      el.ollamaStatusBadge.innerHTML = `<span class="status-dot dot-disconnected"></span><span class="status-text">Ollama Offline (${data.ollamaHost})</span>`;
+      el.ollamaStatusBadge.innerHTML = `<span class="status-dot dot-disconnected"></span><span class="status-text">${data.providerLabel || provider} Offline (${data.host || data.ollamaHost})</span>`;
     }
   } catch (e) {
     el.ollamaStatusBadge.innerHTML = `<span class="status-dot dot-disconnected"></span><span class="status-text">Server Offline</span>`;
@@ -97,7 +100,6 @@ export async function checkOllamaStatus() {
 
 // --- FULL AUTOMATED END-TO-END PIPELINE ---
 export async function runFullEndToEndPipeline() {
-  const model = state.story.model || "hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P";
   const prompt = state.story.prompt;
   const title = state.story.title || "Untitled";
 
@@ -106,7 +108,7 @@ export async function runFullEndToEndPipeline() {
   await new Promise((resolve) => {
     startBaseStoryStreaming({
       prompt,
-      model,
+      model: getStepAISettings("outline").model,
       title,
       onFinish: resolve
     });
@@ -117,7 +119,7 @@ export async function runFullEndToEndPipeline() {
   await new Promise((resolve) => {
     startCharacterStreaming({
       prompt,
-      model,
+      model: getStepAISettings("characters").model,
       title,
       outline: state.story.outline,
       onFinish: resolve
@@ -126,8 +128,12 @@ export async function runFullEndToEndPipeline() {
 
   // Step 3: Storyboard Creator (Build Chapter Storyboard)
   setStage("storyboard");
-  await buildStoryboardFromCurrentState();
+  state.story.chapters = [];
+  state.story.scenes = [];
   renderStoryboard();
+  await buildStoryboardFromCurrentState({
+    onChapter: () => renderStoryboard()
+  });
 
   // Step 4: Novelist Engine (Sequential Chapter Prose) & Reader
   startNovelGeneration({
@@ -140,6 +146,12 @@ export async function runFullEndToEndPipeline() {
 
 // --- INITIALIZATION ---
 function init() {
+  setupAISettings({
+    onNavigateHome: () => setStage("concept"),
+    onProviderChange: provider => checkOllamaStatus(provider)
+  });
+  if (el.btnOpenSettings) el.btnOpenSettings.addEventListener("click", () => setStage("settings"));
+
   // Step Navigation Click Listeners
   Object.keys(el.stepNavs).forEach(key => {
     if (el.stepNavs[key]) {
@@ -161,7 +173,7 @@ function init() {
       setStage("outline");
       startBaseStoryStreaming({
         prompt: state.story.prompt,
-        model: state.story.model || "hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P",
+        model: getStepAISettings("outline").model,
         title: state.story.title,
         onFinish: () => {}
       });
@@ -182,6 +194,9 @@ function init() {
     onProceedToStoryboard: () => {
       renderStoryboard();
       setStage("storyboard");
+    },
+    onStoryboardChapter: () => {
+      renderStoryboard();
     }
   });
 

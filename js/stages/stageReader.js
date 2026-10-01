@@ -9,11 +9,14 @@ import {
   prevPageSpread,
   nextPageSpread,
   getCurrentlyViewingSceneNum,
+  getSpreadStartIndex,
   renderTOC
 } from "../modules/paginationEngine.js";
 import { exportNovel } from "../modules/novelExporter.js";
 
 export function setupReaderListeners({ onNewStoryRequested, onOpenSavedModal }) {
+  applyBookSize();
+
   // Navigation
   if (el.btnPrevPage) el.btnPrevPage.addEventListener("click", () => prevPageSpread());
   if (el.btnNextPage) el.btnNextPage.addEventListener("click", () => nextPageSpread());
@@ -41,10 +44,7 @@ export function setupReaderListeners({ onNewStoryRequested, onOpenSavedModal }) 
         paginateNovel();
         const pageIndex = state.reader.pages.findIndex(p => p.sceneNum === curScene);
         if (pageIndex !== -1) {
-          state.reader.currentSpreadIndex = Math.min(
-            Math.floor(pageIndex / 2),
-            Math.max(0, Math.ceil(state.reader.pages.length / 2) - 1)
-          );
+          state.reader.currentSpreadIndex = getSpreadStartIndex(pageIndex);
         }
         renderCurrentSpread();
       }
@@ -60,13 +60,27 @@ export function setupReaderListeners({ onNewStoryRequested, onOpenSavedModal }) 
         paginateNovel();
         const pageIndex = state.reader.pages.findIndex(p => p.sceneNum === curScene);
         if (pageIndex !== -1) {
-          state.reader.currentSpreadIndex = Math.min(
-            Math.floor(pageIndex / 2),
-            Math.max(0, Math.ceil(state.reader.pages.length / 2) - 1)
-          );
+          state.reader.currentSpreadIndex = getSpreadStartIndex(pageIndex);
         }
         renderCurrentSpread();
       }
+    });
+  }
+
+  if (el.readerBookSize) {
+    el.readerBookSize.value = state.reader.bookSize;
+    el.readerBookSize.addEventListener("change", (event) => {
+      const selectedSize = event.target.value;
+      state.reader.bookSize = selectedSize;
+      localStorage.setItem("storyreader_book_size", selectedSize);
+      applyBookSize();
+      const curScene = getCurrentlyViewingSceneNum();
+      paginateNovel();
+      const pageIndex = state.reader.pages.findIndex(p => p.sceneNum === curScene);
+      state.reader.currentSpreadIndex = pageIndex === -1
+        ? 0
+        : getSpreadStartIndex(pageIndex);
+      renderCurrentSpread();
     });
   }
 
@@ -80,10 +94,7 @@ export function setupReaderListeners({ onNewStoryRequested, onOpenSavedModal }) 
       paginateNovel();
       const pageIndex = state.reader.pages.findIndex(p => p.sceneNum === curScene);
       if (pageIndex !== -1) {
-        state.reader.currentSpreadIndex = Math.min(
-          Math.floor(pageIndex / 2),
-          Math.max(0, Math.ceil(state.reader.pages.length / 2) - 1)
-        );
+        state.reader.currentSpreadIndex = getSpreadStartIndex(pageIndex);
       }
       renderCurrentSpread();
     }, 150);
@@ -149,6 +160,20 @@ export function setupReaderListeners({ onNewStoryRequested, onOpenSavedModal }) 
       if (e.target === el.savedModal) el.savedModal.classList.remove("show");
     });
   }
+}
+
+function applyBookSize() {
+  const bookContainer = document.getElementById("bookContainer");
+  if (!bookContainer) return;
+
+  bookContainer.classList.remove("book-size-5x8", "book-size-5-25x8", "book-size-5-5x8-5", "book-size-6x9");
+  const sizeClass = {
+    "5x8": "book-size-5x8",
+    "5.25x8": "book-size-5-25x8",
+    "5.5x8.5": "book-size-5-5x8-5",
+    "6x9": "book-size-6x9"
+  }[state.reader.bookSize] || "book-size-6x9";
+  bookContainer.classList.add(sizeClass);
 }
 
 export function prepareAndOpenReader({ onSetStage }) {

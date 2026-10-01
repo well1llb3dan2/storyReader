@@ -380,40 +380,55 @@ export function paginateNovel() {
   state.reader.pages = pages;
 }
 
-export function renderCurrentSpread(updateAudioBarCallback) {
-  const pages = state.reader.pages;
-  const totalPages = pages.length;
-  const spreadIndex = state.reader.currentSpreadIndex;
-
-  const leftPageIndex = spreadIndex * 2;
-  const rightPageIndex = spreadIndex * 2 + 1;
-
-  const leftPageData = pages[leftPageIndex];
-  const rightPageData = pages[rightPageIndex];
-
-  if (leftPageData) {
-    el.pageLeftHeader.textContent = state.story.title || 'Novel';
-    el.pageLeftBody.innerHTML = leftPageData.html;
-    el.pageLeftNum.textContent = leftPageData.pageNum;
-    el.pageLeft.style.visibility = 'visible';
-  } else {
-    el.pageLeft.style.visibility = 'hidden';
+function renderPageSlot(pageData, isRightPage) {
+  if (!isRightPage) {
+    if (pageData) {
+      el.pageLeftHeader.textContent = state.story.title || 'Novel';
+      el.pageLeftBody.innerHTML = pageData.html;
+      el.pageLeftNum.textContent = pageData.pageNum;
+      el.pageLeft.style.visibility = 'visible';
+    } else {
+      el.pageLeft.style.visibility = 'hidden';
+    }
+    return;
   }
 
-  if (rightPageData) {
-    const chNum = rightPageData.chapterNum || rightPageData.sceneNum;
-    const chTitle = rightPageData.chapterTitle || rightPageData.sceneTitle;
+  if (pageData) {
+    const chNum = pageData.chapterNum || pageData.sceneNum;
+    const chTitle = pageData.chapterTitle || pageData.sceneTitle;
     el.pageRightHeader.textContent = `Chapter ${chNum}: ${chTitle}`;
-    el.pageRightBody.innerHTML = rightPageData.html;
-    el.pageRightNum.textContent = rightPageData.pageNum;
-    el.pageRight.style.visibility = 'visible';
+    el.pageRightBody.innerHTML = pageData.html;
+    el.pageRightNum.textContent = pageData.pageNum;
   } else {
     el.pageRightHeader.textContent = '';
     el.pageRightBody.innerHTML =
       '<div style="display:flex; height:100%; align-items:center; justify-content:center; color:var(--book-subtext); font-family:var(--font-title); font-size:14px; letter-spacing:2px;">— THE END —</div>';
     el.pageRightNum.textContent = '';
-    el.pageRight.style.visibility = 'visible';
   }
+  el.pageRight.style.visibility = 'visible';
+}
+
+export function getSpreadStartIndex(pageIndex) {
+  return Math.max(0, Math.floor(pageIndex / 2) * 2);
+}
+
+function getLastSpreadStartIndex(totalPages) {
+  return getSpreadStartIndex(Math.max(0, totalPages - 1));
+}
+
+export function renderCurrentSpread(updateAudioBarCallback) {
+  const pages = state.reader.pages;
+  const totalPages = pages.length;
+  const spreadIndex = state.reader.currentSpreadIndex;
+
+  const leftPageIndex = spreadIndex;
+  const rightPageIndex = spreadIndex + 1;
+
+  const leftPageData = pages[leftPageIndex];
+  const rightPageData = pages[rightPageIndex];
+
+  renderPageSlot(leftPageData, false);
+  renderPageSlot(rightPageData, true);
 
   const activePageNum = leftPageData ? leftPageData.pageNum : 1;
   el.readerPageCurrent.textContent = activePageNum;
@@ -428,7 +443,7 @@ export function renderCurrentSpread(updateAudioBarCallback) {
   }
 
   el.btnPrevPage.disabled = spreadIndex === 0;
-  const maxSpread = Math.ceil(totalPages / 2) - 1;
+  const maxSpread = getLastSpreadStartIndex(totalPages);
   el.btnNextPage.disabled = spreadIndex >= maxSpread;
 
   if (typeof updateAudioBarCallback === 'function') {
@@ -436,38 +451,168 @@ export function renderCurrentSpread(updateAudioBarCallback) {
   }
 }
 
+function createPageTurnFace(pageData, faceClass, isRightPage) {
+  const chapterNum = pageData?.chapterNum || pageData?.sceneNum || '';
+  const chapterTitle = pageData?.chapterTitle || pageData?.sceneTitle || '';
+  const headerText = isRightPage
+    ? `Chapter ${chapterNum}: ${escapeHtml(chapterTitle)}`
+    : escapeHtml(state.story.title || 'Novel');
+  const pageNumber = pageData?.pageNum || '';
+
+  return `
+    <div class="page-turn-face ${faceClass} ${isRightPage ? 'page-turn-right' : 'page-turn-left'}">
+      <div class="page-inner-header">
+        <span class="${isRightPage ? 'page-header-scene' : 'page-header-title'}">${headerText}</span>
+      </div>
+      <div class="page-inner-body">
+        ${pageData?.html || ''}
+      </div>
+      <div class="page-inner-footer">
+        <span class="page-num">${pageNumber}</span>
+      </div>
+      <div class="page-spine-gradient ${isRightPage ? 'spine-right' : 'spine-left'}"></div>
+    </div>
+  `;
+}
+
 export function prevPageSpread(updateAudioBarCallback) {
-  if (state.reader.currentSpreadIndex > 0) {
-    state.reader.currentSpreadIndex -= 1;
-    animatePageTurn('prev');
-    renderCurrentSpread(updateAudioBarCallback);
+  if (state.reader.currentSpreadIndex > 0 && !document.querySelector('.page-turn-sheet')) {
+    const spread = document.getElementById('bookSpread');
+    const page = document.getElementById('pageRight');
+    const pages = state.reader.pages;
+    const spreadIndex = state.reader.currentSpreadIndex;
+    
+    if (!spread || !page || pages.length === 0) return;
+    
+    const turningPageData = pages[spreadIndex];
+    const previousPageData = pages[spreadIndex - 1];
+    const previousLeftPageData = pages[spreadIndex - 2];
+    renderPageSlot(previousLeftPageData, false);
+    const pageRect = page.getBoundingClientRect();
+    const spreadRect = spread.getBoundingClientRect();
+    const gutterWidth = spread.querySelector('.book-gutter')?.getBoundingClientRect().width || 0;
+    
+    // Create animation sheet with next page content
+    const sheet = document.createElement('div');
+    sheet.className = 'page-turn-sheet';
+    sheet.style.cssText = `
+      position: absolute;
+      left: ${pageRect.left - spreadRect.left - pageRect.width - (gutterWidth / 2)}px;
+      top: ${pageRect.top - spreadRect.top}px;
+      width: ${pageRect.width}px;
+      height: ${pageRect.height}px;
+      transform-style: preserve-3d;
+      backface-visibility: visible;
+      z-index: 30;
+      pointer-events: none;
+    `;
+    
+    sheet.innerHTML = createPageTurnFace(turningPageData, 'page-turn-front', false)
+      + createPageTurnFace(previousPageData, 'page-turn-back', true);
+    
+    // Add dynamic shadow that follows page position
+    const shadow = document.createElement('div');
+    shadow.className = 'page-turn-shadow';
+    shadow.style.cssText = `
+      position: absolute;
+      left: ${pageRect.left - spreadRect.left - pageRect.width - (gutterWidth / 2)}px;
+      top: ${pageRect.top - spreadRect.top}px;
+      width: ${pageRect.width}px;
+      height: ${pageRect.height}px;
+      background: radial-gradient(ellipse at center, rgba(0,0,0,0.35) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 29;
+    `;
+    spread.appendChild(shadow);
+    
+    spread.appendChild(sheet);
+    
+    // Animate sheet flipping
+    const animationClass = 'turning-prev';
+    requestAnimationFrame(() => sheet.classList.add(animationClass));
+    
+    // Remove sheet after animation and update DOM
+    sheet.addEventListener('animationend', () => {
+      sheet.remove();
+      shadow.remove();
+      state.reader.currentSpreadIndex = Math.max(0, spreadIndex - 2);
+      renderCurrentSpread(updateAudioBarCallback);
+    }, { once: true });
   }
 }
 
 export function nextPageSpread(updateAudioBarCallback) {
-  const maxSpread = Math.ceil(state.reader.pages.length / 2) - 1;
-  if (state.reader.currentSpreadIndex < maxSpread) {
-    state.reader.currentSpreadIndex += 1;
-    animatePageTurn('next');
-    renderCurrentSpread(updateAudioBarCallback);
+  const maxSpread = getLastSpreadStartIndex(state.reader.pages.length);
+  if (state.reader.currentSpreadIndex < maxSpread && !document.querySelector('.page-turn-sheet')) {
+    const spread = document.getElementById('bookSpread');
+    const page = document.getElementById('pageLeft');
+    const pages = state.reader.pages;
+    const spreadIndex = state.reader.currentSpreadIndex;
+    
+    if (!spread || !page || pages.length === 0) return;
+    
+    const turningPageData = pages[spreadIndex + 1];
+    const followingPageData = pages[spreadIndex + 2];
+    const nextRightPageData = pages[spreadIndex + 3];
+    renderPageSlot(nextRightPageData, true);
+    const pageRect = page.getBoundingClientRect();
+    const spreadRect = spread.getBoundingClientRect();
+    const gutterWidth = spread.querySelector('.book-gutter')?.getBoundingClientRect().width || 0;
+    
+    // Create animation sheet with next page content
+    const sheet = document.createElement('div');
+    sheet.className = 'page-turn-sheet';
+    sheet.style.cssText = `
+      position: absolute;
+      left: ${pageRect.left - spreadRect.left + pageRect.width + (gutterWidth / 2)}px;
+      top: ${pageRect.top - spreadRect.top}px;
+      width: ${pageRect.width}px;
+      height: ${pageRect.height}px;
+      transform-style: preserve-3d;
+      backface-visibility: visible;
+      z-index: 30;
+      pointer-events: none;
+    `;
+    
+    sheet.innerHTML = createPageTurnFace(turningPageData, 'page-turn-front', true)
+      + createPageTurnFace(followingPageData, 'page-turn-back', false);
+    
+    // Add dynamic shadow that follows page position
+    const shadow = document.createElement('div');
+    shadow.className = 'page-turn-shadow';
+    shadow.style.cssText = `
+      position: absolute;
+      left: ${pageRect.left - spreadRect.left + pageRect.width + (gutterWidth / 2)}px;
+      top: ${pageRect.top - spreadRect.top}px;
+      width: ${pageRect.width}px;
+      height: ${pageRect.height}px;
+      background: radial-gradient(ellipse at center, rgba(0,0,0,0.35) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 29;
+    `;
+    spread.appendChild(shadow);
+    
+    spread.appendChild(sheet);
+    
+    // Animate sheet flipping
+    const animationClass = 'turning-next';
+    requestAnimationFrame(() => sheet.classList.add(animationClass));
+    
+    // Remove sheet after animation and update DOM
+    sheet.addEventListener('animationend', () => {
+      sheet.remove();
+      shadow.remove();
+      state.reader.currentSpreadIndex = Math.min(spreadIndex + 2, maxSpread);
+      renderCurrentSpread(updateAudioBarCallback);
+    }, { once: true });
   }
-}
-
-export function animatePageTurn(direction) {
-  const spread = document.getElementById('bookSpread');
-  if (!spread) return;
-  spread.style.transition = 'transform 0.15s ease, opacity 0.15s ease';
-  spread.style.transform = direction === 'next' ? 'scale(0.99) rotateY(-1deg)' : 'scale(0.99) rotateY(1deg)';
-  setTimeout(() => {
-    spread.style.transform = 'none';
-  }, 150);
 }
 
 export function getCurrentlyViewingSceneNum() {
   const pages = state.reader.pages;
   const spreadIndex = state.reader.currentSpreadIndex;
-  const leftPage = pages[spreadIndex * 2];
-  const rightPage = pages[spreadIndex * 2 + 1];
+  const leftPage = pages[spreadIndex];
+  const rightPage = pages[spreadIndex + 1];
   return leftPage ? (leftPage.chapterNum || leftPage.sceneNum) : rightPage ? (rightPage.chapterNum || rightPage.sceneNum) : 1;
 }
 
@@ -492,8 +637,8 @@ export function renderTOC(updateAudioBarCallback) {
 
     item.addEventListener('click', () => {
       el.tocModal.classList.remove('show');
-      const targetSpread = Math.floor(pageIndex / 2);
-      state.reader.currentSpreadIndex = Math.max(0, targetSpread);
+      const targetSpread = getSpreadStartIndex(pageIndex);
+      state.reader.currentSpreadIndex = targetSpread;
       renderCurrentSpread(updateAudioBarCallback);
     });
 

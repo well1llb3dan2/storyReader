@@ -54,6 +54,10 @@ export function cleanChapterTitle(title, sceneNumber = 1) {
 }
 
 export function generateFallbackTitle(prompt) {
-  const words = prompt.split(/\s+/).slice(0, 4).join(' ');
+  const titleSource = String(prompt || '')
+    .replace(/^\s*(?:premise\s*:\s*)+/i, '')
+    .replace(/^\s*\([^)]*\)\s*/i, '')
+    .trim();
+  const words = titleSource.split(/\s+/).slice(0, 4).join(' ');
   return words.length > 0 ? words.charAt(0).toUpperCase() + words.slice(1) : 'The Untold Story';
 }

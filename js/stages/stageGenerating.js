@@ -6,6 +6,7 @@ import { el } from '../modules/domElements.js';
 import { showToast, escapeHtml, countWords, cleanChapterTitle } from '../modules/utils.js';
 import { formatNovelProse } from '../modules/textFormatter.js';
 import { saveStoryToServer } from '../modules/storyStorage.js';
+import { getStepAISettings } from '../modules/aiSettings.js';
 
 export function setupGeneratingListeners({ onPrepareAndOpenReader }) {
   if (el.btnPauseGen) el.btnPauseGen.addEventListener('click', togglePauseGeneration);
@@ -76,8 +77,9 @@ export async function processNextSceneInQueue(onFinishCallback) {
   const lastChapterExcerpt = pendingIndex > 0 ? chapters[pendingIndex - 1].content || '' : '';
 
   try {
+    const chapterAI = getStepAISettings('chapter');
     if (el.liveTextContent) {
-      el.liveTextContent.innerHTML = '<div class="waiting-placeholder"><div class="spinner"></div><p>Novelist Engine connecting to Ollama model <code>' + escapeHtml(state.story.model || 'hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P') + '</code>...</p></div>';
+      el.liveTextContent.innerHTML = '<div class="waiting-placeholder"><div class="spinner"></div><p>Novelist Engine connecting to Ollama model <code>' + escapeHtml(chapterAI.model) + '</code>...</p></div>';
     }
     currentChapter.content = '';
 
@@ -107,7 +109,12 @@ export async function processNextSceneInQueue(onFinishCallback) {
         readingLevel: state.story.readingLevel || 'general_commercial',
         previousChaptersSummaries,
         lastChapterExcerpt,
-        model: state.story.model || 'hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P',
+        model: chapterAI.model,
+        provider: chapterAI.provider,
+        contextSize: chapterAI.contextSize,
+        temperature: chapterAI.temperature,
+        topP: chapterAI.topP,
+        numPredict: chapterAI.numPredict,
         stream: true
       })
     });
@@ -279,7 +286,7 @@ export function togglePauseGeneration() {
   if (el.genSubtext) {
     el.genSubtext.textContent = state.generation.isPaused
       ? 'Generation paused.'
-      : `Writing chapters with ${state.story.model || 'Ollama'}...`;
+      : `Writing chapters with ${getStepAISettings('chapter').model}...`;
   }
 }
 

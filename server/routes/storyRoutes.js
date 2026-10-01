@@ -1,19 +1,142 @@
 const express = require("express");
 const router = express.Router();
-const { DEFAULT_MODEL, OLLAMA_HOST } = require("../config");
+const { DEFAULT_MODEL, DEFAULT_PROVIDER } = require("../config");
 const {
   resetOllamaMemory,
   generateStoryOutline,
   generateCharacterDossiers,
+  generateCharacterCards,
   generateStoryboardOutline,
   cleanChapterTitle,
   getReadingLevelInstructions
 } = require("../services/ollamaService");
 const {
+  requestChat,
+  getResponseText,
+  getStreamText,
+  parseStreamPayload
+} = require("../services/llmService");
+const {
   saveStoryToDisk,
   loadStoryFromDisk,
   listSavedStories
 } = require("../services/storageService");
+
+function countWords(text) {
+  return (text || '').trim().split(/\s+/).filter(Boolean).length;
+}
+
+function generationOptions(body, defaults = {}) {
+  const contextSize = Math.max(4096, Math.min(131072, parseInt(body.contextSize, 10) || defaults.contextSize || 16384));
+  const requestedTemperature = Number(body.temperature);
+  const temperature = Math.max(0, Math.min(2, Number.isFinite(requestedTemperature) ? requestedTemperature : (defaults.temperature || 0.7)));
+  const requestedTopP = Number(body.topP);
+  const topP = Math.max(0, Math.min(1, Number.isFinite(requestedTopP) ? requestedTopP : 0.9));
+  const numPredict = Math.max(512, Math.min(131072, parseInt(body.numPredict, 10) || defaults.numPredict || 8192));
+  return { contextSize, temperature, topP, numPredict };
+}
+
+async function generateChapterConversation({
+  model,
+  provider,
+  systemPrompt,
+  userPrompt,
+  generation,
+  minWords,
+  targetWords,
+  stream,
+  onDelta
+}) {
+  const messages = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt }
+  ];
+  const maxTurns = Math.max(2, Math.min(64, Math.ceil(targetWords / 1200) + 4));
+  let accumulatedText = "";
+
+  for (let turn = 0; turn < maxTurns; turn++) {
+    const ollamaResp = await requestChat({
+      provider,
+      model,
+      messages,
+      stream,
+      options: {
+        temperature: generation.temperature,
+        top_p: generation.topP,
+        num_ctx: generation.contextSize,
+        num_predict: generation.numPredict,
+        ignore_eos: true,
+        keep_alive: "10m"
+      }
+    });
+
+    if (!ollamaResp.ok) {
+      const errText = await ollamaResp.text();
+      throw new Error(`Ollama returned ${ollamaResp.status}: ${errText}`);
+    }
+
+    let turnText = "";
+    if (stream) {
+      const reader = ollamaResp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const parsed = parseStreamPayload(line, provider);
+            if (!parsed) continue;
+            const delta = getStreamText(parsed, provider);
+            if (delta) {
+              turnText += delta;
+              if (typeof onDelta === "function") onDelta(delta);
+            }
+          } catch (error) {}
+        }
+      }
+
+      if (buffer.trim()) {
+        try {
+          const parsed = parseStreamPayload(buffer.trim(), provider);
+          if (parsed) {
+            const delta = getStreamText(parsed, provider);
+            if (delta) {
+              turnText += delta;
+              if (typeof onDelta === "function") onDelta(delta);
+            }
+          }
+        } catch (error) {}
+      }
+    } else {
+      const data = await ollamaResp.json();
+      turnText = getResponseText(data, provider).trim();
+    }
+
+    turnText = turnText.trim();
+    if (!turnText) break;
+
+    accumulatedText += `${accumulatedText ? "\n\n" : ""}${turnText}`;
+    messages.push({ role: "assistant", content: turnText });
+
+    const currentWords = countWords(accumulatedText);
+    if (currentWords >= minWords || currentWords >= Math.round(targetWords * 1.15)) break;
+
+    messages.push({
+      role: "user",
+      content: `Continue the same chapter directly from your last sentence. Do not restart, recap, summarize, add a heading, or conclude the chapter. Develop the next scene beat with full novel prose. Continue until the chapter reaches approximately ${targetWords.toLocaleString()} words; the chapter currently contains about ${currentWords.toLocaleString()} words.`
+    });
+  }
+
+  return accumulatedText.trim();
+}
 
 /**
  * Step 1: Narrative Architect (narrative-architect.md)
@@ -30,8 +153,12 @@ router.post("/api/generate-outline", async (req, res) => {
     targetWordsPerChapter = 2500,
     readingLevel = "general_commercial",
     model = DEFAULT_MODEL,
+    provider = DEFAULT_PROVIDER,
+    contextSize,
+    temperature,
     stream = false
   } = req.body;
+  const generation = generationOptions(req.body, { contextSize: 16384, temperature: 0.75 });
 
   if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
     return res.status(400).json({ error: "A story premise is required." });
@@ -53,7 +180,7 @@ router.post("/api/generate-outline", async (req, res) => {
     console.log(`Prompt: "${prompt}"`);
 
     try {
-      await resetOllamaMemory(model);
+      await resetOllamaMemory(model, provider);
 
       const systemPrompt = `You are a professional narrative architect with decades of experience in story development, plotting, and turning raw ideas into polished, structured chapter overviews. Your specialty is taking a loose or vague story concept and methodically breaking it down into a clear, engaging, and commercially viable chapter-by-chapter roadmap.
 
@@ -71,28 +198,26 @@ ${chapterCount >= 30 ? '- For large chapter counts (30+ chapters), structure the
   - Notes on how the chapter advances the main plot, introduces or resolves major conflicts, and serves as a transition point
   - Any necessary world-building or thematic threads that appear in that chapter
 - Maintain perfect internal consistency with the original story idea while adding professional polish, pacing, and reader engagement.
+- Preserve explicit premise constraints verbatim. If the premise includes metadata in parentheses such as (Tone: High Fantasy / Mythological / Mystical), treat the complete text after Tone: as the tone value; never truncate it at the first space, slash, or punctuation. Carry that full tone into the roadmap and do not replace it with only High or another first word.
 - Use clear, professional formatting with markdown headings, bullet points, and numbered chapter lists for easy readability.
 - After the chapter list, provide a short "Overall Story Arc" summary that ties the chapters together and explains how the narrative builds to its climax and resolution.
 
 Always respond in a confident, expert tone as if you are a top-tier collaborator who has already internalized the user's idea. Never summarize the story idea back to the user—jump straight into the professional chapter overview.`;
 
-      const ollamaResp = await fetch(`${OLLAMA_HOST}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `Story Title: ${title || "Untitled"}\nTarget Chapters: ${chapterCount}\nTarget Total Words: ~${totalWords.toLocaleString()} words (~${wordsPerChapter} words/chapter)\nTarget Reading Level: ${readingInfo.levelName}\n\nStory Premise:\n${prompt}\n\nDeliver the complete ${chapterCount}-chapter roadmap and overall story arc now:` }
-          ],
-          stream: true,
-          options: {
-            temperature: 0.75,
-            top_p: 0.9,
-            num_ctx: 16384,
-            num_predict: 8192
-          }
-        })
+      const ollamaResp = await requestChat({
+        provider,
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `Story Title: ${title || "Untitled"}\nTarget Chapters: ${chapterCount}\nTarget Total Words: ~${totalWords.toLocaleString()} words (~${wordsPerChapter} words/chapter)\nTarget Reading Level: ${readingInfo.levelName}\n\nStory Premise:\n${prompt}\n\nDeliver the complete ${chapterCount}-chapter roadmap and overall story arc now:` }
+        ],
+        stream: true,
+        options: {
+          temperature: generation.temperature,
+          top_p: generation.topP,
+          num_ctx: generation.contextSize,
+          num_predict: generation.numPredict
+        }
       });
 
       if (!ollamaResp.ok) {
@@ -120,16 +245,19 @@ Always respond in a confident, expert tone as if you are a top-tier collaborator
         for (const line of lines) {
           if (!line.trim()) continue;
           try {
-            const parsed = JSON.parse(line);
+            const parsed = parseStreamPayload(line, provider);
+            if (!parsed) continue;
             const msg = parsed.message || {};
+            const thinkingChunk = msg.thinking || parsed.choices?.[0]?.delta?.reasoning_content || "";
 
-            if (msg.thinking) {
-              accumulatedThinking += msg.thinking;
-              res.write(`data: ${JSON.stringify({ thinkingDelta: msg.thinking, done: false })}\n\n`);
+            if (thinkingChunk) {
+              accumulatedThinking += thinkingChunk;
+              res.write(`data: ${JSON.stringify({ thinkingDelta: thinkingChunk, done: false })}\n\n`);
             }
 
-            if (msg.content) {
-              let contentChunk = msg.content;
+            const streamContent = getStreamText(parsed, provider);
+            if (streamContent) {
+              let contentChunk = streamContent;
 
               if (contentChunk.includes("<think>")) {
                 inThinkTag = true;
@@ -186,7 +314,12 @@ Always respond in a confident, expert tone as if you are a top-tier collaborator
         prompt,
         title,
         targetChapterCount: chapterCount,
-        model
+        model,
+        provider,
+        contextSize: generation.contextSize,
+        temperature: generation.temperature,
+        topP: generation.topP,
+        numPredict: generation.numPredict
       });
 
       res.json({
@@ -216,8 +349,12 @@ router.post("/api/generate-characters", async (req, res) => {
     outline = "",
     readingLevel = "general_commercial",
     model = DEFAULT_MODEL,
+    provider = DEFAULT_PROVIDER,
+    contextSize,
+    temperature,
     stream = false
   } = req.body;
+  const generation = generationOptions(req.body, { contextSize: 16384, temperature: 0.72 });
 
   if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
     return res.status(400).json({ error: "A story premise is required." });
@@ -235,7 +372,7 @@ router.post("/api/generate-characters", async (req, res) => {
     console.log(`Model: ${model} | Title: ${title} | Reading Level: ${readingInfo.levelName}`);
 
     try {
-      await resetOllamaMemory(model);
+      await resetOllamaMemory(model, provider);
 
       const systemPrompt = `You are a professional storyteller and character designer. Your expertise lies in crafting deeply human, layered characters that feel alive and integral to any story you are given. You excel at transforming sparse story ideas into richly detailed character dossiers that can be used for writing, world-building, or development.
 
@@ -283,23 +420,20 @@ Response Guidelines:
       }
       userMessage += `\n\nGenerate all character dossiers for main and supporting characters now:`;
 
-      const ollamaResp = await fetch(`${OLLAMA_HOST}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userMessage }
-          ],
-          stream: true,
-          options: {
-            temperature: 0.72,
-            top_p: 0.9,
-            num_ctx: 16384,
-            num_predict: 8192
-          }
-        })
+      const ollamaResp = await requestChat({
+        provider,
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage }
+        ],
+        stream: true,
+        options: {
+          temperature: generation.temperature,
+          top_p: generation.topP,
+          num_ctx: generation.contextSize,
+          num_predict: generation.numPredict
+        }
       });
 
       if (!ollamaResp.ok) {
@@ -327,16 +461,19 @@ Response Guidelines:
         for (const line of lines) {
           if (!line.trim()) continue;
           try {
-            const parsed = JSON.parse(line);
+            const parsed = parseStreamPayload(line, provider);
+            if (!parsed) continue;
             const msg = parsed.message || {};
+            const thinkingChunk = msg.thinking || parsed.choices?.[0]?.delta?.reasoning_content || "";
 
-            if (msg.thinking) {
-              accumulatedThinking += msg.thinking;
-              res.write(`data: ${JSON.stringify({ thinkingDelta: msg.thinking, done: false })}\n\n`);
+            if (thinkingChunk) {
+              accumulatedThinking += thinkingChunk;
+              res.write(`data: ${JSON.stringify({ thinkingDelta: thinkingChunk, done: false })}\n\n`);
             }
 
-            if (msg.content) {
-              let contentChunk = msg.content;
+            const streamContent = getStreamText(parsed, provider);
+            if (streamContent) {
+              let contentChunk = streamContent;
 
               if (contentChunk.includes("<think>")) {
                 inThinkTag = true;
@@ -394,7 +531,12 @@ Response Guidelines:
         title,
         outline,
         readingLevel,
-        model
+        model,
+        provider,
+        contextSize: generation.contextSize,
+        temperature: generation.temperature,
+        topP: generation.topP,
+        numPredict: generation.numPredict
       });
 
       res.json({
@@ -409,8 +551,87 @@ Response Guidelines:
 });
 
 /**
+ * Progressive Character Designer
+ * Plans the cast, then generates and emits one structured dossier at a time.
+ */
+router.post("/api/generate-character-cards", async (req, res) => {
+  const {
+    prompt,
+    title = "Untitled Story",
+    outline = "",
+    readingLevel = "general_commercial",
+    model = DEFAULT_MODEL,
+    provider = DEFAULT_PROVIDER,
+    contextSize,
+    temperature,
+    stream = false
+  } = req.body;
+  const generation = generationOptions(req.body, { contextSize: 16384, temperature: 0.35 });
+
+  if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+    return res.status(400).json({ error: "A story premise is required." });
+  }
+
+  if (stream) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    try {
+      const result = await generateCharacterCards({
+        prompt,
+        title,
+        outline,
+        readingLevel,
+        model,
+        provider,
+        contextSize: generation.contextSize,
+        temperature: generation.temperature,
+        topP: generation.topP,
+        numPredict: generation.numPredict,
+        onCharacter: async (character, characterNumber, totalCharacters) => {
+          res.write(`data: ${JSON.stringify({ character, characterNumber, totalCharacters, done: false })}\n\n`);
+        }
+      });
+
+      res.write(`data: ${JSON.stringify({
+        done: true,
+        characters: result.characters,
+        charactersMarkdown: result.charactersMarkdown
+      })}\n\n`);
+      res.end();
+    } catch (error) {
+      console.error("[API ERROR] Streaming character card generation exception:", error);
+      res.write(`data: ${JSON.stringify({ error: error.message || "Error communicating with Ollama" })}\n\n`);
+      res.end();
+    }
+    return;
+  }
+
+  try {
+    const result = await generateCharacterCards({
+      prompt,
+      title,
+      outline,
+      readingLevel,
+      model,
+      provider,
+      contextSize: generation.contextSize,
+      temperature: generation.temperature,
+      topP: generation.topP,
+      numPredict: generation.numPredict
+    });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error("[API ERROR] Character card generation exception:", error);
+    res.status(500).json({ error: error.message || "Error communicating with Ollama" });
+  }
+});
+
+/**
  * Step 3: Storyboard Creator (storyboard-creator.md)
- * Generate Chapter Cards from Plot Roadmap and Character Dossiers
+ * Generate chapter outline cards from the plot roadmap
  */
 router.post("/api/generate-storyboard", async (req, res) => {
   const {
@@ -423,9 +644,13 @@ router.post("/api/generate-storyboard", async (req, res) => {
     readingLevel = "general_commercial",
     outline: providedOutline,
     initialWriting: legacyInitialWriting,
-    charactersMarkdown = "",
-    model = DEFAULT_MODEL
+    model = DEFAULT_MODEL,
+    provider = DEFAULT_PROVIDER,
+    contextSize,
+    temperature,
+    stream = false
   } = req.body;
+  const generation = generationOptions(req.body, { contextSize: 16384, temperature: 0.2 });
 
   if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
     return res.status(400).json({ error: "A story prompt is required." });
@@ -435,10 +660,59 @@ router.post("/api/generate-storyboard", async (req, res) => {
   const totalWords = Math.max(1000, Math.min(400000, parseInt(targetTotalWords, 10) || (chapterCount * 2500)));
   const wordsPerChapter = targetWordsPerChapter || Math.round(totalWords / chapterCount);
 
+  if (stream) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    try {
+      const outline = (providedOutline && providedOutline.trim())
+        || (legacyInitialWriting && legacyInitialWriting.trim())
+        || await generateStoryOutline({ prompt, title, targetChapterCount: chapterCount, targetTotalWords: totalWords, targetWordsPerChapter: wordsPerChapter, readingLevel, model, provider, contextSize: generation.contextSize, temperature: generation.temperature, topP: generation.topP, numPredict: generation.numPredict });
+
+      const result = await generateStoryboardOutline({
+        prompt,
+        title,
+        targetChapterCount: chapterCount,
+        targetTotalWords: totalWords,
+        targetWordsPerChapter: wordsPerChapter,
+        readingLevel,
+        outline,
+        model,
+        provider,
+        contextSize: generation.contextSize,
+        temperature: generation.temperature,
+        topP: generation.topP,
+        numPredict: generation.numPredict,
+        onChapter: async (chapter, chapterNumber, totalChapters) => {
+          res.write(`data: ${JSON.stringify({ chapter, chapterNumber, totalChapters, done: false })}\n\n`);
+        }
+      });
+
+      res.write(`data: ${JSON.stringify({
+        done: true,
+        title: result.title,
+        prompt: result.prompt,
+        outline,
+        initialWriting: outline,
+        targetTotalWords: totalWords,
+        targetWordsPerChapter: wordsPerChapter,
+        readingLevel
+      })}\n\n`);
+      res.end();
+    } catch (error) {
+      console.error("[API ERROR] Streaming storyboard generation exception:", error);
+      res.write(`data: ${JSON.stringify({ error: error.message || "Error communicating with Ollama" })}\n\n`);
+      res.end();
+    }
+    return;
+  }
+
   try {
     const outline = (providedOutline && providedOutline.trim())
       || (legacyInitialWriting && legacyInitialWriting.trim())
-      || await generateStoryOutline({ prompt, title, targetChapterCount: chapterCount, targetTotalWords: totalWords, targetWordsPerChapter: wordsPerChapter, readingLevel, model });
+      || await generateStoryOutline({ prompt, title, targetChapterCount: chapterCount, targetTotalWords: totalWords, targetWordsPerChapter: wordsPerChapter, readingLevel, model, provider, contextSize: generation.contextSize, temperature: generation.temperature, topP: generation.topP, numPredict: generation.numPredict });
 
     const result = await generateStoryboardOutline({
       prompt,
@@ -448,13 +722,16 @@ router.post("/api/generate-storyboard", async (req, res) => {
       targetWordsPerChapter: wordsPerChapter,
       readingLevel,
       outline,
-      charactersMarkdown,
-      model
+      model,
+      provider,
+      contextSize: generation.contextSize,
+      temperature: generation.temperature,
+      topP: generation.topP,
+      numPredict: generation.numPredict
     });
 
     result.outline = outline;
     result.initialWriting = outline;
-    result.charactersMarkdown = charactersMarkdown;
     result.targetTotalWords = totalWords;
     result.targetWordsPerChapter = wordsPerChapter;
     result.readingLevel = readingLevel;
@@ -487,9 +764,11 @@ router.post(["/api/generate-chapter", "/api/generate-scene"], async (req, res) =
     lastChapterExcerpt = "",
     lastSceneExcerpt = "",
     model = DEFAULT_MODEL,
+    provider = DEFAULT_PROVIDER,
+    contextSize,
+    temperature,
     stream = false
   } = req.body;
-
   const currentChapter = chapter || scene;
 
   if (!currentChapter || (!currentChapter.chapterNumber && !currentChapter.sceneNumber)) {
@@ -506,7 +785,9 @@ router.post(["/api/generate-chapter", "/api/generate-scene"], async (req, res) =
     || (storyContext.targetTotalWords && storyContext.totalChapters ? Math.round(storyContext.targetTotalWords / storyContext.totalChapters) : 2500);
   const minWords = Math.max(200, Math.round(targetWords * 0.85));
   const maxWords = Math.round(targetWords * 1.15);
-  const numPredict = Math.min(16384, Math.max(2048, Math.round(targetWords * 2.5)));
+  const defaultNumPredict = Math.min(6500, Math.max(2048, Math.round(targetWords * 2)));
+  const generation = generationOptions(req.body, { contextSize: 8192, temperature: 0.78, numPredict: defaultNumPredict });
+  const paragraphCount = Math.max(8, Math.ceil(targetWords / 100));
 
   const readingLevel = req.body.readingLevel || storyContext.readingLevel || 'general_commercial';
   const readingInfo = getReadingLevelInstructions(readingLevel);
@@ -535,7 +816,7 @@ When the user provides a Chapter Overview, you will expand it into a complete, s
 ### Core Instructions
 - Take the overview as your blueprint only. The overview contains key events, character moments, thematic beats, and plot points. You must expand every element into vivid prose while preserving the exact tone, stakes, and character arcs established in the overview.
 - Calibrate all prose, vocabulary, sentence structures, dialogue, and psychological density strictly to match the target reading level: ${readingInfo.levelName}.
-- Chapter must feel complete yet open-ended. End on a hook, question, or revelation that naturally leads into the next chapter.
+- Treat the minimum word count as a hard requirement, not a suggestion. Write approximately ${paragraphCount} substantial prose paragraphs, averaging about 100 words each. Before ending, develop at least 6 sequential scene beats from the overview: establish the immediate situation, deepen the setting, introduce or escalate conflict, force a meaningful choice, show consequences, and only then reach the final hook. Do not summarize these beats, skip ahead, or resolve the chapter early. Do not write any ending hook or concluding sentence until at least ${minWords.toLocaleString()} words have been written. If the immediate scene seems finished, continue into the next consequence or connected scene instead of stopping.
 - Perspective: Write in third-person limited, rotating between 1–3 characters per chapter as needed to maintain maximum engagement and emotional investment.
 - Voice & Style: Professional fiction with cinematic flair matched to the reading level. Use evocative, flowing language. Show, don't tell. Never summarize. Every scene must be alive with sensory detail, internal monologue, and emotional truth.
 - ${pacingGuidance}
@@ -589,6 +870,8 @@ ${currentChapter.characterActions ? `Physicality & Character Actions: ${currentC
 
 Begin writing Chapter ${chapterNum} now:`;
 
+    await resetOllamaMemory(model, provider);
+
   if (stream) {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -600,79 +883,22 @@ Begin writing Chapter ${chapterNum} now:`;
     console.log(`Objective: ${currentChapter.summary}`);
 
     try {
-      await resetOllamaMemory(model);
-
-      const ollamaResp = await fetch(`${OLLAMA_HOST}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt }
-          ],
-          stream: true,
-          options: {
-            temperature: 0.78,
-            top_p: 0.9,
-            num_ctx: 16384,
-            num_predict: numPredict
-          }
-        })
+      const accumulatedText = await generateChapterConversation({
+        model,
+        provider,
+        systemPrompt,
+        userPrompt,
+        generation,
+        minWords,
+        targetWords,
+        stream: true,
+        onDelta: delta => res.write(`data: ${JSON.stringify({ delta, done: false })}\n\n`)
       });
 
-      if (!ollamaResp.ok) {
-        const errText = await ollamaResp.text();
-        console.error(`[API ERROR] Chapter ${chapterNum} streaming HTTP ${ollamaResp.status}:`, errText);
-        res.write(`data: ${JSON.stringify({ error: `Ollama returned ${ollamaResp.status}: ${errText}` })}\n\n`);
-        return res.end();
-      }
-
-      const reader = ollamaResp.body.getReader();
-      const decoder = new TextDecoder();
-      let accumulatedText = "";
-      let streamBuffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        streamBuffer += decoder.decode(value, { stream: true });
-        const lines = streamBuffer.split("\n");
-        streamBuffer = lines.pop();
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const parsed = JSON.parse(line);
-            if (parsed.message?.content) {
-              const delta = parsed.message.content;
-              accumulatedText += delta;
-              res.write(`data: ${JSON.stringify({ delta, done: false })}\n\n`);
-            }
-            if (parsed.done) {
-              res.write(`data: ${JSON.stringify({ done: true, fullText: accumulatedText.trim() })}\n\n`);
-            }
-          } catch (err) {}
-        }
-      }
-
-      if (streamBuffer.trim()) {
-        try {
-          const parsed = JSON.parse(streamBuffer.trim());
-          if (parsed.message?.content) {
-            const delta = parsed.message.content;
-            accumulatedText += delta;
-            res.write(`data: ${JSON.stringify({ delta, done: false })}\n\n`);
-          }
-          if (parsed.done) {
-            res.write(`data: ${JSON.stringify({ done: true, fullText: accumulatedText.trim() })}\n\n`);
-          }
-        } catch (err) {}
-      }
+      res.write(`data: ${JSON.stringify({ done: true, fullText: accumulatedText.trim() })}\n\n`);
 
       console.log(`\n---------------- [CHAPTER ${chapterNum} COMPLETED] ----------------`);
-      console.log(`Word count: ~ ${accumulatedText.split(/\s+/).length} words`);
+      console.log(`Word count: ~ ${countWords(accumulatedText)} words`);
       console.log(`-------------------------------------------------------------------\n`);
 
       res.end();
@@ -680,48 +906,32 @@ Begin writing Chapter ${chapterNum} now:`;
       console.error(`[API ERROR] Streaming chapter ${chapterNum} exception:`, error);
       res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
       res.end();
+    } finally {
+      await resetOllamaMemory(model, provider);
     }
   } else {
     try {
-      await resetOllamaMemory(model);
-
-      const ollamaResp = await fetch(`${OLLAMA_HOST}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt }
-          ],
-          stream: false,
-          options: {
-            temperature: 0.78,
-            top_p: 0.9,
-            num_ctx: 16384,
-            num_predict: 8192
-          }
-        })
+      const initialContent = await generateChapterConversation({
+        model,
+        provider,
+        systemPrompt,
+        userPrompt,
+        generation,
+        minWords,
+        targetWords,
+        stream: false
       });
-
-      if (!ollamaResp.ok) {
-        const errText = await ollamaResp.text();
-        console.error(`[API ERROR] Chapter ${chapterNum} generation HTTP ${ollamaResp.status}:`, errText);
-        return res.status(ollamaResp.status).json({ error: `Ollama error: ${errText}` });
-      }
-
-      const data = await ollamaResp.json();
-      const content = (data.message?.content || "").trim();
-
       res.json({
         chapterNumber: chapterNum,
         sceneNumber: chapterNum,
         title: cleanTitle,
-        content
+        content: initialContent
       });
     } catch (error) {
       console.error(`[API ERROR] Chapter ${chapterNum} generation exception:`, error);
       res.status(500).json({ error: error.message || "Failed to generate chapter" });
+    } finally {
+      await resetOllamaMemory(model, provider);
     }
   }
 });

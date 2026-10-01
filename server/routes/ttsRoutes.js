@@ -3,7 +3,7 @@ const router = express.Router();
 const path = require('fs');
 const fs = require('fs');
 const nodePath = require('path');
-const { AUDIO_DIR, DEFAULT_MODEL } = require('../config');
+const { AUDIO_DIR, DEFAULT_MODEL, DEFAULT_PROVIDER } = require('../config');
 const {
   parseSceneToSingleSpeakerSegments,
   generateSpeakerProfilesWithLLM
@@ -27,7 +27,8 @@ router.post('/api/generate-speaker-profiles', async (req, res) => {
     title = 'Untitled Story',
     prompt = '',
     scenes = [],
-    model = DEFAULT_MODEL
+    model = DEFAULT_MODEL,
+    provider = DEFAULT_PROVIDER
   } = req.body;
 
   try {
@@ -35,7 +36,8 @@ router.post('/api/generate-speaker-profiles', async (req, res) => {
       title,
       prompt,
       scenes,
-      model
+      model,
+      provider
     });
 
     res.json({

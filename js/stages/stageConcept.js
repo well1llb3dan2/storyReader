@@ -5,6 +5,7 @@ import { state } from "../state/store.js";
 import { el } from "../modules/domElements.js";
 import { showToast, generateFallbackTitle } from "../modules/utils.js";
 import { getNovelRecommendation, getReadingLevelById } from "../config/novelScaleConfig.js";
+import { aiSettings } from "../modules/aiSettings.js";
 
 let currentSelectedGenreId = null;
 
@@ -121,7 +122,7 @@ export function handlePremiseSubmit(onPremiseSubmitted) {
   const targetTotalWords = (el.totalWordsInput && parseInt(el.totalWordsInput.value, 10)) || 50000;
   const targetWordsPerChapter = Math.round(targetTotalWords / targetChapterCount);
   const readingLevel = (el.readingLevelSelect && el.readingLevelSelect.value) || "general_commercial";
-  const model = (el.modelSelect && el.modelSelect.value.trim()) || "hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P";
+  const model = aiSettings.models.outline;
 
   state.story = {
     id: `story_${Date.now()}`,
@@ -138,6 +139,7 @@ export function handlePremiseSubmit(onPremiseSubmitted) {
     readingLevel,
     genreId: currentSelectedGenreId,
     model,
+    aiSettings: JSON.parse(JSON.stringify(aiSettings)),
     createdAt: new Date().toISOString(),
     chapters: [],
     scenes: []

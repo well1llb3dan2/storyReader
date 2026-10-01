@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
-const { AUDIO_DIR, OLLAMA_HOST, DEFAULT_MODEL } = require('../config');
+const { AUDIO_DIR, DEFAULT_MODEL, DEFAULT_PROVIDER } = require('../config');
 const { cleanAndParseJSON } = require('../utils/jsonParser');
+const { requestChat, getResponseText } = require('./llmService');
 const {
   pollSingleTtsTask,
   downloadAudioFile,
@@ -225,7 +226,7 @@ function parseSceneToSingleSpeakerSegments(content, customSpeakers = [], sceneCo
 /**
  * Generate Speaker Profiles with LLM (Ollama)
  */
-async function generateSpeakerProfilesWithLLM({ title = 'Untitled Story', prompt = '', scenes = [], model = DEFAULT_MODEL }) {
+async function generateSpeakerProfilesWithLLM({ title = 'Untitled Story', prompt = '', scenes = [], model = DEFAULT_MODEL, provider = DEFAULT_PROVIDER }) {
   const characterSet = new Set();
   scenes.forEach(sc => {
     (sc.characters || []).forEach(c => {
@@ -283,23 +284,20 @@ Generate the complete JSON "speakers" list containing "Narrator" and all charact
   console.log(`\n================ [GENERATING AI SPEAKER PROFILES] ================`);
   console.log(`Characters: Narrator, ${charactersList.join(', ')} | Model: ${model}`);
 
-  const response = await fetch(`${OLLAMA_HOST}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: model,
-      format: 'json',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage }
-      ],
-      stream: false,
-      options: {
-        temperature: 0.7,
-        num_ctx: 8192,
-        num_predict: 4096
-      }
-    })
+  const response = await requestChat({
+    provider,
+    model,
+    json: true,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage }
+    ],
+    stream: false,
+    options: {
+      temperature: 0.7,
+      num_ctx: 8192,
+      num_predict: 4096
+    }
   });
 
   if (!response.ok) {
@@ -309,7 +307,7 @@ Generate the complete JSON "speakers" list containing "Narrator" and all charact
   }
 
   const data = await response.json();
-  const rawContent = data.message?.content || '';
+  const rawContent = getResponseText(data, provider);
   console.log(`\n---------------- [AI SPEAKER PROFILES RAW RESPONSE] ----------------`);
   console.log(rawContent);
   console.log(`--------------------------------------------------------------------\n`);

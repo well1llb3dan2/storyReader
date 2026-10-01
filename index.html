@@ -58,19 +58,47 @@
       </nav>
 
       <div class="header-right">
-        <!-- Ollama Connection Status -->
+        <!-- Local AI Connection Status -->
         <div class="ollama-status" id="ollamaStatusBadge">
           <span class="status-dot dot-checking"></span>
-          <span class="status-text" id="statusText">Checking Ollama...</span>
+          <span class="status-text" id="statusText">Checking local AI...</span>
         </div>
         <button class="btn-secondary btn-sm" id="btnOpenSavedModal" title="Saved Novels">
           📚 Library
+        </button>
+        <button class="btn-secondary btn-sm" id="btnOpenSettings" title="AI Settings" aria-label="Open AI settings">
+          ⚙ Settings
         </button>
       </div>
     </header>
 
     <!-- MAIN CONTENT AREA -->
     <main class="app-main">
+
+      <!-- AI SETTINGS -->
+      <section id="stage-settings" class="stage-view">
+        <div class="settings-header glass-panel">
+          <div>
+            <span class="hero-tag">AI Generation Controls</span>
+            <h2>Settings</h2>
+            <p>Choose the local AI provider, model, and generation limits for each stage of the novel pipeline.</p>
+          </div>
+          <button class="btn-secondary" id="btnCloseSettings">← Back to Studio</button>
+        </div>
+
+        <div class="settings-panel glass-panel">
+          <nav class="settings-tabs" aria-label="AI settings sections">
+            <button class="settings-tab active" type="button" data-settings-tab="models">Models</button>
+            <button class="settings-tab" type="button" data-settings-tab="context">Context</button>
+            <button class="settings-tab" type="button" data-settings-tab="temperature">Temperature</button>
+            <button class="settings-tab" type="button" data-settings-tab="num-predict">Num Predict</button>
+          </nav>
+          <div class="settings-tab-panel active" data-settings-panel="models"></div>
+          <div class="settings-tab-panel" data-settings-panel="context"></div>
+          <div class="settings-tab-panel" data-settings-panel="temperature"></div>
+          <div class="settings-tab-panel" data-settings-panel="num-predict"></div>
+        </div>
+      </section>
 
       <!-- ============================================== -->
       <!-- STAGE 1: PREMISE & CONCEPT                     -->
@@ -198,13 +226,6 @@
               </div>
             </div>
 
-            <div class="form-group full-width model-config-row">
-              <div class="model-select-wrap">
-                <label for="modelSelect">Local Ollama Model:</label>
-                <input type="text" id="modelSelect" value="hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P" placeholder="hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P">
-              </div>
-              <span class="model-note">Preset to <code>hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P</code></span>
-            </div>
           </div>
 
           <div class="form-actions">
@@ -227,7 +248,7 @@
             <div class="base-story-tag-row">
               <span class="badge-stage">STEP 1: NARRATIVE ARCHITECT</span>
               <span class="meta-pill" id="baseStoryScenesBadge">20 Chapters Planned</span>
-              <span class="meta-pill" id="baseStoryModelBadge">hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P</span>
+              <span class="meta-pill" id="baseStoryModelBadge">hf.co/DavidAU/Gemma-The-Writer-Mighty-Sword-9B-GGUF:Q6_K</span>
             </div>
             <h2 id="baseStoryTitle">Story Plot & Chapter Roadmap</h2>
             <p id="baseStoryPromptSummary" class="base-story-prompt-sub">Premise...</p>
@@ -321,20 +342,20 @@
           </div>
         </div>
 
-        <!-- Characters Editor Card -->
-        <div class="base-story-editor-card glass-panel">
+        <!-- Character Cards -->
+        <div class="characters-editor-surface">
           <div class="editor-toolbar">
             <div class="toolbar-left">
               <span class="pulsing-red-dot" id="charactersLiveStreamDot" style="display:none;"></span>
-              <span class="editor-label" id="charactersLiveStreamStatus">Character Dossiers (Markdown Tables)</span>
+              <span class="editor-label" id="charactersLiveStreamStatus">Character Dossiers</span>
             </div>
             <div class="toolbar-right">
               <span class="word-counter" id="charactersLiveWordCount">0 Words</span>
             </div>
           </div>
 
-          <div class="base-story-text-container">
-            <textarea id="charactersTextarea" class="base-story-textarea" placeholder="Character dossiers will appear here... You can edit character backgrounds, traits, and synergies directly."></textarea>
+          <div class="character-cards-grid" id="charactersGrid">
+            <p class="empty-state">Character cards will appear here as they are generated.</p>
           </div>
 
           <div class="base-story-bottom-bar">
@@ -439,7 +460,7 @@
           </div>
 
           <div class="gen-controls-row">
-            <span class="gen-subtext" id="genSubtext">Writing detailed chapters with narrative continuity using <code>hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P</code>...</span>
+            <span class="gen-subtext" id="genSubtext">Writing detailed chapters with narrative continuity using <code>hf.co/DavidAU/Gemma-The-Writer-Mighty-Sword-9B-GGUF:Q6_K</code>...</span>
             <div class="gen-action-btns">
               <button class="btn-secondary btn-sm" id="btnPauseGen">⏸ Pause</button>
               <button class="btn-secondary btn-sm" id="btnStopGen">⏹ Stop Batch</button>
@@ -475,7 +496,7 @@
               <div class="parchment-content" id="liveTextContent">
                 <div class="waiting-placeholder">
                   <div class="spinner"></div>
-                  <p>Connecting to Ollama model <code>hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P</code>...</p>
+                  <p>Connecting to Ollama model <code>hf.co/DavidAU/Gemma-The-Writer-Mighty-Sword-9B-GGUF:Q6_K</code>...</p>
                 </div>
               </div>
             </div>
@@ -528,6 +549,15 @@
               <!-- Font Size -->
               <button class="btn-toggle-sm" id="btnFontDec" title="Smaller Font">A-</button>
               <button class="btn-toggle-sm" id="btnFontInc" title="Larger Font">A+</button>
+
+              <!-- Standard book trim size -->
+              <label class="reader-size-control" for="readerBookSize">Book size</label>
+              <select class="reader-size-select" id="readerBookSize" title="Book size">
+                <option value="5x8">5 × 8 in</option>
+                <option value="5.25x8">5.25 × 8 in</option>
+                <option value="5.5x8.5">5.5 × 8.5 in</option>
+                <option value="6x9" selected>6 × 9 in</option>
+              </select>
 
               <!-- Theme Palette Switcher -->
               <div class="theme-picker" title="Reader Theme">

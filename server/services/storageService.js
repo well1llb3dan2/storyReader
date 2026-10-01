@@ -75,6 +75,7 @@ function saveStoryToDisk(storyData) {
     prompt: storyData.prompt || '',
     targetChapterCount: storyData.targetChapterCount || storyData.targetSceneCount || chaptersList.length,
     chapterCount: chaptersList.length,
+    characters: storyData.characters || [],
     updatedAt: storyData.updatedAt,
     charactersMarkdown: storyData.charactersMarkdown || '',
     chapters: chaptersList.map(ch => ({

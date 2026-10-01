@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
-const { PORT, OLLAMA_HOST, DEFAULT_MODEL, ROOT_DIR, AUDIO_DIR } = require("./server/config");
+const { PORT, OLLAMA_HOST, LLAMA_CPP_HOST, DEFAULT_MODEL, DEFAULT_PROVIDER, ROOT_DIR, AUDIO_DIR } = require("./server/config");
 const { testOllamaStartup } = require("./server/services/ollamaService");
 
 // Routers
@@ -31,9 +31,11 @@ app.listen(PORT, () => {
   console.log("=====================================================");
   console.log("  Story Reader Server running on http://localhost:" + PORT);
   console.log("  Ollama Target Host: " + OLLAMA_HOST);
+  console.log("  llama.cpp Target Host: " + LLAMA_CPP_HOST);
+  console.log("  Default Provider: " + DEFAULT_PROVIDER);
   console.log("  Default Model: " + DEFAULT_MODEL);
   console.log("=====================================================");
 
   // Run startup connection sanity check
-  testOllamaStartup();
+  testOllamaStartup(DEFAULT_PROVIDER);
 });

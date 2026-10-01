@@ -18,7 +18,8 @@ export const el = {
     get characters() { return getEl("stage-characters"); },
     get storyboard() { return getEl("stage-storyboard"); },
     get generating() { return getEl("stage-generating"); },
-    get reader() { return getEl("stage-reader"); }
+    get reader() { return getEl("stage-reader"); },
+    get settings() { return getEl("stage-settings"); }
   },
   stepNavs: {
     get concept() { return getEl("step-nav-1"); },
@@ -32,6 +33,8 @@ export const el = {
   get ollamaStatusBadge() { return getEl("ollamaStatusBadge"); },
   get statusText() { return getEl("statusText"); },
   get btnOpenSavedModal() { return getEl("btnOpenSavedModal"); },
+  get btnOpenSettings() { return getEl("btnOpenSettings"); },
+  get btnCloseSettings() { return getEl("btnCloseSettings"); },
 
   // Stage 1: Premise
   get promptInput() { return getEl("promptInput"); },
@@ -49,7 +52,6 @@ export const el = {
   get readingLevelSelect() { return getEl("readingLevelSelect"); },
   get readingLevelGradeBadge() { return getEl("readingLevelGradeBadge"); },
   get readingLevelDesc() { return getEl("readingLevelDesc"); },
-  get modelSelect() { return getEl("modelSelect"); },
   get btnGenerateStoryboard() { return getEl("btnGenerateStoryboard"); },
   get btnRunFullPipeline() { return getEl("btnRunFullPipeline"); },
 
@@ -94,6 +96,7 @@ export const el = {
   get charactersLiveStreamStatus() { return getEl("charactersLiveStreamStatus"); },
   get charactersLiveWordCount() { return getEl("charactersLiveWordCount"); },
   get charactersTextarea() { return getEl("charactersTextarea"); },
+  get charactersGrid() { return getEl("charactersGrid"); },
 
   // Stage 3: Storyboard (Storyboard Creator)
   get sbStoryTitle() { return getEl("sbStoryTitle"); },
@@ -138,6 +141,7 @@ export const el = {
   get readerPageTotal() { return getEl("readerPageTotal"); },
   get btnFontDec() { return getEl("btnFontDec"); },
   get btnFontInc() { return getEl("btnFontInc"); },
+  get readerBookSize() { return getEl("readerBookSize"); },
   get btnExportMenu() { return getEl("btnExportMenu"); },
   get exportDropdown() { return getEl("exportDropdown"); },
   get btnExportMD() { return getEl("btnExportMD"); },

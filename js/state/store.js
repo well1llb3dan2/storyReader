@@ -3,9 +3,11 @@
  */
 import { el } from '../modules/domElements.js';
 import { showToast } from '../modules/utils.js';
+import { aiSettings } from '../modules/aiSettings.js';
 
 export const state = {
   stage: 'concept', // 'concept' | 'outline' | 'characters' | 'storyboard' | 'generating' | 'reader'
+  aiSettings,
   story: {
     id: null,
     title: 'Untitled Novel',
@@ -20,7 +22,7 @@ export const state = {
     targetWordsPerChapter: 2500,
     readingLevel: 'general_commercial',
     genreId: null,
-    model: 'hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P',
+    model: 'hf.co/DavidAU/Gemma-The-Writer-Mighty-Sword-9B-GGUF:Q6_K',
     createdAt: null,
     chapters: [],
     scenes: [] // Synced alias
@@ -38,6 +40,7 @@ export const state = {
     currentSpreadIndex: 0,
     pages: [],
     fontSize: 17,
+    bookSize: localStorage.getItem('storyreader_book_size') || '6x9',
     theme: 'theme-parchment',
     showSpeakerTags: false
   },

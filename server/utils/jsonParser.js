@@ -76,13 +76,17 @@ function cleanAndParseJSON(rawText) {
     }
   }
 
-  // 3. Fallback: Regex extraction of individual scene blocks even if truncated
-  const sceneBlocks = cleaned.split(/\{\s*"sceneNumber"/i).slice(1);
-  if (sceneBlocks.length > 0) {
+  // 3. Fallback: extract individual chapter/scene blocks even if the response is truncated
+  const recordPattern = /\{\s*"(chapterNumber|sceneNumber)"\s*:/gi;
+  const recordMatches = [...cleaned.matchAll(recordPattern)];
+  if (recordMatches.length > 0) {
     const recoveredScenes = [];
-    for (let i = 0; i < sceneBlocks.length; i++) {
-      const block = '{"sceneNumber"' + sceneBlocks[i];
-      const sceneNumMatch = block.match(/"sceneNumber"\s*:\s*(\d+)/i);
+    for (let i = 0; i < recordMatches.length; i++) {
+      const match = recordMatches[i];
+      const blockStart = match.index;
+      const blockEnd = recordMatches[i + 1]?.index || cleaned.length;
+      const block = cleaned.substring(blockStart, blockEnd);
+      const sceneNumMatch = block.match(/"(?:chapterNumber|sceneNumber)"\s*:\s*(\d+)/i);
       const titleMatch = block.match(/"title"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"?/i);
       const settingMatch = block.match(/"setting"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"?/i);
       const summaryMatch = block.match(/"summary"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"?/i);
@@ -97,12 +101,12 @@ function cleanAndParseJSON(rawText) {
       if (sceneNumMatch || titleMatch) {
         const charList = chars.length > 0 ? chars.join(' and ') : 'Main Character';
         recoveredScenes.push({
+          chapterNumber: sceneNumMatch ? parseInt(sceneNumMatch[1], 10) : i + 1,
           sceneNumber: sceneNumMatch ? parseInt(sceneNumMatch[1], 10) : i + 1,
           title: titleMatch ? titleMatch[1] : `Scene ${i + 1}`,
           setting: settingMatch ? settingMatch[1] : 'Various',
           characters: chars.length > 0 ? chars : ['Main Characters'],
           summary: summaryMatch ? summaryMatch[1] : `Subject: ${charList} in Scene ${i + 1}. Key narrative progression. Arrangement: Medium shot with balanced composition. Camera and Light: 35mm lens, soft atmospheric lighting. Palette and Style: Cinematic film still. Extra Detail: Detailed textures and atmospheric depth.`,
-          targetWords: 600,
           mood: moodMatch ? moodMatch[1] : 'Dramatic'
         });
       }

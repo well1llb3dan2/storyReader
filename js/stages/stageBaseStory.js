@@ -5,8 +5,9 @@
 import { state } from "../state/store.js";
 import { el } from "../modules/domElements.js";
 import { showToast, countWords, escapeHtml, cleanChapterTitle } from "../modules/utils.js";
-import { requestStoryboardGeneration } from "../api/apiClient.js";
+import { requestStoryboardGenerationStream } from "../api/apiClient.js";
 import { saveStoryToServer } from "../modules/storyStorage.js";
+import { getStepAISettings } from "../modules/aiSettings.js";
 
 let isThinkingCollapsed = false;
 let isCharsThinkingCollapsed = false;
@@ -16,7 +17,8 @@ export function setupBaseStoryListeners({
   onBackToPremise,
   onRegenerateOutline,
   onProceedToStoryboard,
-  onBackToOutline
+  onBackToOutline,
+  onStoryboardChapter
 }) {
   // Plot / Roadmap stage listeners
   if (el.btnBackToPremiseFromBase) el.btnBackToPremiseFromBase.addEventListener("click", onBackToPremise);
@@ -64,7 +66,7 @@ export function setupBaseStoryListeners({
         prompt: state.story.prompt,
         title: state.story.title,
         outline: state.story.outline,
-        model: state.story.model,
+        model: getStepAISettings("characters").model,
         onFinish: () => {}
       });
     });
@@ -72,12 +74,12 @@ export function setupBaseStoryListeners({
 
   if (el.btnConfirmCharacters) {
     el.btnConfirmCharacters.addEventListener("click", () => {
-      handleConfirmCharacters(onProceedToStoryboard);
+      handleConfirmCharacters(onProceedToStoryboard, onStoryboardChapter);
     });
   }
   if (el.btnConfirmCharactersBottom) {
     el.btnConfirmCharactersBottom.addEventListener("click", () => {
-      handleConfirmCharacters(onProceedToStoryboard);
+      handleConfirmCharacters(onProceedToStoryboard, onStoryboardChapter);
     });
   }
 
@@ -125,11 +127,100 @@ export function updateLiveWordCount() {
 }
 
 export function updateCharsLiveWordCount() {
-  const text = el.charactersTextarea ? el.charactersTextarea.value : (state.story.charactersMarkdown || "");
+  const text = el.charactersTextarea ? el.charactersTextarea.value : buildCharactersMarkdown(state.story.characters || []);
   const words = countWords(text);
   if (el.charactersLiveWordCount) {
     el.charactersLiveWordCount.textContent = `${words.toLocaleString()} Words`;
   }
+}
+
+const characterCardFields = [
+  ["Age", "age"],
+  ["Physical Appearance", "physicalAppearance"],
+  ["Personality", "personality"],
+  ["Background & History", "background"],
+  ["Core Motivations", "motivations"],
+  ["Flaws & Vulnerabilities", "flaws"],
+  ["Skills, Powers & Talents", "skills"],
+  ["Key Relationships", "relationships"],
+  ["Character Arc & Growth", "characterArc"],
+  ["Signature Lines / Quotes", "signatureLines"],
+  ["Additional Notes", "additionalNotes"]
+];
+
+function formatCharacterValue(value) {
+  if (value === undefined || value === null) return "";
+  if (Array.isArray(value)) return value.map(formatCharacterValue).filter(Boolean).join("; ");
+  if (typeof value === "object") {
+    return Object.entries(value)
+      .map(([key, nestedValue]) => {
+        const formattedValue = formatCharacterValue(nestedValue);
+        const label = key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").replace(/^./, char => char.toUpperCase());
+        return formattedValue ? `${label}: ${formattedValue}` : "";
+      })
+      .filter(Boolean)
+      .join("; ");
+  }
+  return String(value).replace(/\s+/g, " ").trim();
+}
+
+function buildCharactersMarkdown(characters) {
+  return characters.map(character => {
+    const rows = [
+      ["Full Name", character.name],
+      ["Role in the Story", character.role],
+      ...characterCardFields
+        .filter(([, field]) => field !== "age" || character[field])
+        .map(([label, field]) => [label, character[field]])
+    ].map(([label, value]) => `| ${label} | ${formatCharacterValue(value).replace(/\|/g, "\\|")} |`).join("\n");
+
+    return `### Character Dossier: ${character.name}\n\n| Aspect | Details |\n|---|---|\n${rows}`;
+  }).join("\n\n");
+}
+
+export function renderCharacterCards(characters = state.story.characters || []) {
+  if (!el.charactersGrid) return;
+  el.charactersGrid.innerHTML = "";
+
+  if (characters.length === 0) {
+    el.charactersGrid.innerHTML = '<p class="empty-state">Character cards will appear here as they are generated.</p>';
+    return;
+  }
+
+  characters.forEach((character, index) => {
+    const card = document.createElement("article");
+    card.className = "character-card";
+    card.innerHTML = `
+      <div class="character-card-header">
+        <div>
+          <span class="character-card-number">Character ${index + 1}</span>
+          <h3 class="character-card-name">${escapeHtml(character.name || `Character ${index + 1}`)}</h3>
+        </div>
+        <span class="character-card-role">${escapeHtml(character.role || "Supporting character")}</span>
+      </div>
+      <div class="character-card-fields">
+        ${characterCardFields.map(([label, field]) => `
+          <div class="character-card-field">
+            <span class="character-card-label">${label}</span>
+            <div class="character-card-value" contenteditable="true" data-character-field="${field}">${escapeHtml(formatCharacterValue(character[field]))}</div>
+          </div>
+        `).join("")}
+      </div>
+    `;
+
+    card.querySelectorAll("[data-character-field]").forEach(fieldElement => {
+      fieldElement.addEventListener("input", event => {
+        character[event.currentTarget.dataset.characterField] = event.currentTarget.textContent.trim();
+        state.story.charactersMarkdown = buildCharactersMarkdown(state.story.characters || []);
+        updateCharsLiveWordCount();
+      });
+      fieldElement.addEventListener("blur", () => {
+        saveStoryToServer();
+      });
+    });
+
+    el.charactersGrid.appendChild(card);
+  });
 }
 
 export function renderBaseStoryView() {
@@ -151,13 +242,21 @@ export function renderBaseStoryView() {
 }
 
 export function renderCharactersView() {
-  const { title, prompt, charactersMarkdown, targetChapterCount, targetTotalWords } = state.story;
+  const { title, prompt, targetChapterCount, targetTotalWords } = state.story;
   const totalChapters = targetChapterCount || 20;
   const totalWords = targetTotalWords || 50000;
+  if (Array.isArray(state.story.characters) && state.story.characters.length > 0) {
+    state.story.charactersMarkdown = buildCharactersMarkdown(state.story.characters);
+  }
   if (el.charactersStoryTitle) el.charactersStoryTitle.textContent = `${title} — Character Dossiers`;
   if (el.charactersPromptSummary) el.charactersPromptSummary.textContent = `Premise: ${prompt}`;
-  if (el.charactersCountBadge) el.charactersCountBadge.textContent = `${totalChapters} Chapters • ~${totalWords.toLocaleString()} Words`;
-  if (el.charactersTextarea) el.charactersTextarea.value = charactersMarkdown || "";
+  if (el.charactersCountBadge) {
+    const characterCount = (state.story.characters || []).length;
+    el.charactersCountBadge.textContent = characterCount > 0
+      ? `${characterCount} Characters`
+      : "Building Cast...";
+  }
+  renderCharacterCards(state.story.characters || []);
   updateCharsLiveWordCount();
 }
 
@@ -185,6 +284,7 @@ export async function startBaseStoryStreaming({ prompt, model, title, onFinish }
     const totalWords = state.story.targetTotalWords || 50000;
     const wordsPerChapter = state.story.targetWordsPerChapter || Math.round(totalWords / totalChapters);
     const readingLevel = state.story.readingLevel || "general_commercial";
+    const outlineAI = getStepAISettings("outline");
 
     const resp = await fetch("/api/generate-outline", {
       method: "POST",
@@ -197,7 +297,12 @@ export async function startBaseStoryStreaming({ prompt, model, title, onFinish }
         targetTotalWords: totalWords,
         targetWordsPerChapter: wordsPerChapter,
         readingLevel,
-        model,
+        model: outlineAI.model,
+        provider: outlineAI.provider,
+        contextSize: outlineAI.contextSize,
+        temperature: outlineAI.temperature,
+        topP: outlineAI.topP,
+        numPredict: outlineAI.numPredict,
         stream: true
       })
     });
@@ -284,6 +389,8 @@ export async function startBaseStoryStreaming({ prompt, model, title, onFinish }
  * Initiates live Server-Sent Events (SSE) streaming of Character Dossiers
  */
 export async function startCharacterStreaming({ prompt, model, title, outline, onFinish }) {
+  state.story.characters = [];
+  state.story.charactersMarkdown = "";
   renderCharactersView();
 
   if (el.charactersThinkingWrap) el.charactersThinkingWrap.style.display = "none";
@@ -296,12 +403,10 @@ export async function startCharacterStreaming({ prompt, model, title, outline, o
   const actionBtns = [el.btnRegenCharacters, el.btnConfirmCharacters, el.btnConfirmCharactersBottom].filter(Boolean);
   actionBtns.forEach(b => { b.disabled = true; });
 
-  let accumulatedText = "";
-  let accumulatedThinking = "";
-
   try {
     const readingLevel = state.story.readingLevel || "general_commercial";
-    const resp = await fetch("/api/generate-characters", {
+    const characterAI = getStepAISettings("characters");
+    const resp = await fetch("/api/generate-character-cards", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -309,7 +414,12 @@ export async function startCharacterStreaming({ prompt, model, title, outline, o
         title: title || state.story.title || "Untitled",
         outline: outline || state.story.outline,
         readingLevel,
-        model: model || state.story.model,
+        model: characterAI.model,
+        provider: characterAI.provider,
+        contextSize: characterAI.contextSize,
+        temperature: characterAI.temperature,
+        topP: characterAI.topP,
+        numPredict: characterAI.numPredict,
         stream: true
       })
     });
@@ -322,6 +432,30 @@ export async function startCharacterStreaming({ prompt, model, title, outline, o
     const decoder = new TextDecoder();
     let buffer = "";
 
+    const handleEvent = async line => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data: ")) return;
+
+      const data = JSON.parse(trimmed.slice(6));
+      if (data.error) throw new Error(data.error);
+
+      if (data.character) {
+        state.story.characters.push(data.character);
+        state.story.charactersMarkdown = buildCharactersMarkdown(state.story.characters);
+        renderCharacterCards(state.story.characters);
+        updateCharsLiveWordCount();
+        if (el.charactersLiveStreamStatus) {
+          el.charactersLiveStreamStatus.textContent = `Character ${data.characterNumber || state.story.characters.length} generated...`;
+        }
+        await saveStoryToServer();
+      }
+
+      if (data.done) {
+        if (Array.isArray(data.characters)) state.story.characters = data.characters;
+        if (data.charactersMarkdown) state.story.charactersMarkdown = data.charactersMarkdown;
+      }
+    };
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -331,45 +465,13 @@ export async function startCharacterStreaming({ prompt, model, title, outline, o
       buffer = lines.pop();
 
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith("data: ")) {
-          const jsonStr = trimmed.slice(6);
-          try {
-            const data = JSON.parse(jsonStr);
-
-            if (data.thinkingDelta) {
-              if (el.charactersThinkingWrap && el.charactersThinkingWrap.style.display === "none") {
-                el.charactersThinkingWrap.style.display = "block";
-              }
-              accumulatedThinking += data.thinkingDelta;
-              if (el.charactersThinkingContent) {
-                el.charactersThinkingContent.textContent = accumulatedThinking;
-              }
-              if (el.charactersThinkingBody) {
-                el.charactersThinkingBody.scrollTop = el.charactersThinkingBody.scrollHeight;
-              }
-            }
-
-            if (data.delta) {
-              accumulatedText += data.delta;
-              if (el.charactersTextarea) {
-                el.charactersTextarea.value = accumulatedText;
-                el.charactersTextarea.scrollTop = el.charactersTextarea.scrollHeight;
-              }
-              updateCharsLiveWordCount();
-            }
-
-            if (data.done) {
-              if (data.fullText) accumulatedText = data.fullText;
-              if (data.fullThinking) accumulatedThinking = data.fullThinking;
-            }
-          } catch (err) {}
-        }
+        await handleEvent(line);
       }
     }
 
-    state.story.charactersMarkdown = accumulatedText.trim();
-    if (el.charactersTextarea) el.charactersTextarea.value = state.story.charactersMarkdown;
+    buffer += decoder.decode();
+    if (buffer.trim()) await handleEvent(buffer);
+
     if (el.charactersLiveStreamDot) el.charactersLiveStreamDot.style.display = "none";
     if (el.charactersLiveStreamStatus) el.charactersLiveStreamStatus.textContent = "Character Dossiers Generated ✓";
     if (el.charactersThinkingStatusBadge) el.charactersThinkingStatusBadge.textContent = "Character Designer complete ✓";
@@ -393,7 +495,7 @@ export async function startCharacterStreaming({ prompt, model, title, outline, o
 
 export async function handleRegenerateOutline(onOutlineReady) {
   const prompt = state.story.prompt;
-  const model = state.story.model || "hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P";
+  const model = getStepAISettings("outline").model;
   const title = state.story.title || "Untitled";
 
   if (!prompt) {
@@ -425,9 +527,10 @@ export async function handleConfirmPlot(onProceedToCharacters) {
   }
 
   if (!state.story.charactersMarkdown) {
+    const characterAI = getStepAISettings("characters");
     startCharacterStreaming({
       prompt: state.story.prompt,
-      model: state.story.model,
+      model: characterAI.model,
       title: state.story.title,
       outline: state.story.outline,
       onFinish: () => {}
@@ -437,7 +540,7 @@ export async function handleConfirmPlot(onProceedToCharacters) {
   }
 }
 
-export async function buildStoryboardFromCurrentState() {
+export async function buildStoryboardFromCurrentState({ onChapter } = {}) {
   const currentChars = el.charactersTextarea ? el.charactersTextarea.value.trim() : (state.story.charactersMarkdown || "").trim();
   state.story.charactersMarkdown = currentChars;
 
@@ -445,8 +548,35 @@ export async function buildStoryboardFromCurrentState() {
   const totalWords = state.story.targetTotalWords || 50000;
   const wordsPerChapter = state.story.targetWordsPerChapter || Math.round(totalWords / totalChapters);
   const readingLevel = state.story.readingLevel || "general_commercial";
+  const storyboardAI = getStepAISettings("storyboard");
 
-  const data = await requestStoryboardGeneration({
+  state.story.chapters = [];
+  state.story.scenes = [];
+
+  const appendChapter = async (ch, chapterNumber) => {
+    const chapterIndex = chapterNumber || state.story.chapters.length + 1;
+    const formattedChapter = {
+      chapterNumber: ch.chapterNumber || ch.sceneNumber || chapterIndex,
+      sceneNumber: ch.chapterNumber || ch.sceneNumber || chapterIndex,
+      title: cleanChapterTitle(ch.title, chapterIndex),
+      summary: ch.summary || "Chapter narrative progression.",
+      targetWords: ch.targetWords || wordsPerChapter || 2500,
+      content: "",
+      status: "pending",
+      wordCount: 0
+    };
+
+    state.story.chapters.push(formattedChapter);
+    state.story.scenes = state.story.chapters;
+
+    if (typeof onChapter === "function") {
+      await onChapter(formattedChapter, state.story.chapters);
+    }
+
+    await saveStoryToServer();
+  };
+
+  await requestStoryboardGenerationStream({
     prompt: state.story.prompt,
     title: state.story.title,
     targetChapterCount: totalChapters,
@@ -455,37 +585,21 @@ export async function buildStoryboardFromCurrentState() {
     targetWordsPerChapter: wordsPerChapter,
     readingLevel,
     outline: state.story.outline,
-    charactersMarkdown: state.story.charactersMarkdown,
-    model: state.story.model || "hf.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive:Q6_K_P"
+    model: storyboardAI.model,
+    provider: storyboardAI.provider,
+    contextSize: storyboardAI.contextSize,
+    temperature: storyboardAI.temperature,
+    topP: storyboardAI.topP,
+    numPredict: storyboardAI.numPredict
+  }, {
+    onChapter: appendChapter
   });
 
-  const rawChapters = data.chapters || data.scenes || [];
-  const formattedChapters = rawChapters.map((ch, idx) => ({
-    chapterNumber: ch.chapterNumber || ch.sceneNumber || idx + 1,
-    sceneNumber: ch.chapterNumber || ch.sceneNumber || idx + 1,
-    title: cleanChapterTitle(ch.title, ch.chapterNumber || idx + 1),
-    setting: ch.setting || "Key Location",
-    characters: Array.isArray(ch.characters) ? ch.characters : ["Main Characters"],
-    summary: ch.summary || "Chapter narrative progression.",
-    characterActions: ch.characterActions || "",
-    suggestedDialogue: ch.suggestedDialogue || "",
-    emotionalSubtext: ch.emotionalSubtext || "",
-    pacingNotes: ch.pacingNotes || "",
-    targetWords: ch.targetWords || wordsPerChapter || 2500,
-    mood: ch.mood || "Dramatic",
-    content: "",
-    status: "pending",
-    wordCount: 0
-  }));
-
-  state.story.chapters = formattedChapters;
-  state.story.scenes = formattedChapters;
-
   await saveStoryToServer();
-  return formattedChapters;
+  return state.story.chapters;
 }
 
-export async function handleConfirmCharacters(onProceedToStoryboard) {
+export async function handleConfirmCharacters(onProceedToStoryboard, onStoryboardChapter) {
   const btns = [el.btnConfirmCharacters, el.btnConfirmCharactersBottom].filter(Boolean);
   btns.forEach(b => {
     b.disabled = true;
@@ -493,11 +607,14 @@ export async function handleConfirmCharacters(onProceedToStoryboard) {
   });
 
   try {
-    await buildStoryboardFromCurrentState();
+    state.story.chapters = [];
+    state.story.scenes = [];
 
     if (typeof onProceedToStoryboard === "function") {
       onProceedToStoryboard();
     }
+
+    await buildStoryboardFromCurrentState({ onChapter: onStoryboardChapter });
 
     showToast(`Storyboard created with ${state.story.chapters.length} chapters!`, "success");
   } catch (error) {
